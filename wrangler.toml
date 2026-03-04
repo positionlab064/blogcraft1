@@ -1,0 +1,9 @@
+name = "blogcraft-ai"
+compatibility_date = "2024-09-23"
+compatibility_flags = ["nodejs_compat"]
+pages_build_output_dir = "dist"
+
+[[d1_databases]]
+binding = "DB"
+database_name = "blogcraft-ai-db"
+database_id = "74d6cb20-3aed-413b-a613-32c69fe9a431"
