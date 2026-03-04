@@ -1,5 +1,6 @@
 import { Hono } from 'hono';
 import { cors } from 'hono/cors';
+import { handle } from 'hono/cloudflare-pages';
 import { SignJWT, jwtVerify } from 'jose';
 import { GoogleGenAI } from '@google/genai';
 import * as cheerio from 'cheerio';
@@ -395,4 +396,4 @@ app.get('/api/photos/session/:sessionId', requireAuth, async (c) => {
   return c.json(rows.results);
 });
 
-export const onRequest = app.fetch;
+export const onRequest = handle(app);
