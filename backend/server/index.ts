@@ -50,7 +50,7 @@ app.get('/api/health', (_req, res) => {
 
 // ── 프로덕션: 정적 파일 서빙 ──────────────────────────────
 if (!isDev) {
-  const distPath = path.join(__dirname, '..', 'dist');
+  const distPath = path.join(__dirname, '..', '..', 'dist');
   app.use(express.static(distPath));
   app.get('*', (_req, res) => {
     res.sendFile(path.join(distPath, 'index.html'));
