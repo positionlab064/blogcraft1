@@ -25,6 +25,7 @@ export interface User {
   email: string;
   username: string | null;
   name: string | null;
+  nickname: string | null;
   phone: string | null;
   created_at?: string;
 }
@@ -114,8 +115,8 @@ export const api = {
   login: (username: string, password: string) =>
     req<AuthRes>('/auth/login', { method: 'POST', body: JSON.stringify({ username, password }) }),
 
-  register: (email: string, password: string, username: string, name?: string, phone?: string) =>
-    req<AuthRes>('/auth/register', { method: 'POST', body: JSON.stringify({ email, password, username, name, phone }) }),
+  register: (email: string, password: string, username: string, name?: string, nickname?: string, phone?: string) =>
+    req<AuthRes>('/auth/register', { method: 'POST', body: JSON.stringify({ email, password, username, name, nickname, phone }) }),
 
   me: () => req<User>('/auth/me'),
 
