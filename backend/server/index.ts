@@ -21,11 +21,20 @@ const isDev = process.env.NODE_ENV !== 'production';
 const app = express();
 
 // ── 미들웨어 ────────────────────────────────────────────────
+const allowedOrigins = isDev
+  ? ['http://localhost:3000', 'http://127.0.0.1:3000']
+  : process.env.APP_URL
+    ? process.env.APP_URL.split(',').map(s => s.trim())
+    : ['https://blogcraft1.pages.dev'];
+
 app.use(
   cors({
-    origin: isDev
-      ? ['http://localhost:3000', 'http://127.0.0.1:3000']
-      : (process.env.APP_URL ? process.env.APP_URL.split(',').map(s => s.trim()) : true),
+    origin: (origin, callback) => {
+      // origin이 없으면 (Postman, curl 등) 허용
+      if (!origin) return callback(null, true);
+      if (allowedOrigins.includes(origin)) return callback(null, true);
+      callback(new Error(`CORS blocked: ${origin}`));
+    },
     credentials: true,
   }),
 );
