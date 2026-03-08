@@ -1,5 +1,5 @@
 import { Router, Request, Response } from 'express';
-import { GoogleGenAI } from '@google/genai';
+import OpenAI from 'openai';
 import { getDb } from '../db.js';
 
 const router = Router();
@@ -23,13 +23,13 @@ router.post('/', async (req: Request, res: Response) => {
     return res.status(400).json({ error: '키워드를 입력해주세요.' });
   }
 
-  const apiKey = process.env.GEMINI_API_KEY;
+  const apiKey = process.env.OPENAI_API_KEY;
   if (!apiKey) {
-    return res.status(500).json({ error: 'GEMINI_API_KEY가 설정되지 않았습니다.' });
+    return res.status(500).json({ error: 'OPENAI_API_KEY가 설정되지 않았습니다.' });
   }
 
   try {
-    const ai = new GoogleGenAI({ apiKey });
+    const openai = new OpenAI({ apiKey });
     const platformStyle = PLATFORM_STYLES[platform] ?? PLATFORM_STYLES.naver;
     const toneStyle = TONE_STYLES[tone] ?? TONE_STYLES.casual;
     const tagsText = tags.length > 0 ? `관련 태그: ${tags.join(', ')}` : '';
@@ -49,16 +49,14 @@ ${tagsText}
   "content": "완성된 블로그 본문 (마크다운 형식, 800~1500자, 소제목 3~5개 포함)"
 }`;
 
-    const response = await ai.models.generateContent({
-      model: 'gemini-2.0-flash',
-      contents: [{ role: 'user', parts: [{ text: prompt }] }],
-      config: {
-        temperature: 0.8,
-        maxOutputTokens: 2048,
-      },
+    const response = await openai.chat.completions.create({
+      model: 'gpt-4o-mini',
+      messages: [{ role: 'user', content: prompt }],
+      temperature: 0.8,
+      max_tokens: 2048,
     });
 
-    const rawText = response.text ?? '';
+    const rawText = response.choices[0]?.message?.content ?? '';
     const jsonMatch = rawText.match(/\{[\s\S]*\}/);
     if (!jsonMatch) {
       throw new Error('AI 응답에서 JSON을 파싱하지 못했습니다.');

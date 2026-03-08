@@ -1,5 +1,5 @@
 import { Router, Request, Response } from 'express';
-import { GoogleGenAI } from '@google/genai';
+import OpenAI from 'openai';
 import { getDb } from '../db.js';
 
 const router = Router();
@@ -34,12 +34,12 @@ router.post('/analyze', async (req: Request, res: Response) => {
   try {
     const result = analyzeLocally({ keyword, title, content, meta_description });
 
-    // Gemini로 추가 제안 생성
-    const apiKey = process.env.GEMINI_API_KEY;
+    // OpenAI로 추가 제안 생성
+    const apiKey = process.env.OPENAI_API_KEY;
     if (apiKey) {
       try {
-        const ai = new GoogleGenAI({ apiKey });
-        const aiSuggestions = await getAiSuggestions(ai, { keyword, title, content, result });
+        const openai = new OpenAI({ apiKey });
+        const aiSuggestions = await getAiSuggestions(openai, { keyword, title, content, result });
         result.suggestions = [...result.suggestions, ...aiSuggestions];
       } catch {
         // AI 제안 실패 시 기본 제안만 사용
@@ -180,7 +180,7 @@ function analyzeLocally(opts: {
 }
 
 async function getAiSuggestions(
-  ai: GoogleGenAI,
+  openai: OpenAI,
   opts: {
     keyword: string;
     title: string;
@@ -204,13 +204,14 @@ ${contentPreview}
 응답 형식 (JSON 배열만):
 ["제안1", "제안2", "제안3"]`;
 
-  const response = await ai.models.generateContent({
-    model: 'gemini-2.0-flash',
-    contents: [{ role: 'user', parts: [{ text: prompt }] }],
-    config: { temperature: 0.3, maxOutputTokens: 512 },
+  const response = await openai.chat.completions.create({
+    model: 'gpt-4o-mini',
+    messages: [{ role: 'user', content: prompt }],
+    temperature: 0.3,
+    max_tokens: 512,
   });
 
-  const rawText = response.text ?? '';
+  const rawText = response.choices[0]?.message?.content ?? '';
   const jsonMatch = rawText.match(/\[[\s\S]*\]/);
   if (!jsonMatch) return [];
 
