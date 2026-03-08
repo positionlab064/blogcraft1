@@ -6,11 +6,11 @@ RUN apk add --no-cache python3 make g++
 
 WORKDIR /app
 
-COPY package.json package-lock.json* ./
+COPY backend/package.json backend/package-lock.json* ./
 RUN npm ci
 
-COPY server/ ./server/
-COPY tsconfig.json ./
+COPY backend/server/ ./server/
+COPY backend/tsconfig.json ./
 
 # TypeScript → JavaScript 컴파일
 RUN npx tsc -p tsconfig.json
@@ -22,7 +22,7 @@ RUN apk add --no-cache python3 make g++
 
 WORKDIR /app
 
-COPY package.json package-lock.json* ./
+COPY backend/package.json backend/package-lock.json* ./
 RUN npm ci --omit=dev
 
 # 빌드된 JS 복사
