@@ -24,7 +24,8 @@ export async function initDb(): Promise<void> {
       username TEXT UNIQUE,
       password_hash TEXT NOT NULL,
       name TEXT,
-      phone TEXT,
+      nickname TEXT,
+      phone TEXT UNIQUE,
       created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
     );
 

@@ -11,6 +11,7 @@ interface UserRow {
   email: string;
   username: string | null;
   name: string | null;
+  nickname: string | null;
   phone: string | null;
   password_hash: string;
   created_at: string;
@@ -24,14 +25,18 @@ function signToken(userId: number, email: string): string {
 
 // POST /api/auth/register
 router.post('/register', async (req: Request, res: Response) => {
-  const { email, password, name, username, phone } = req.body as {
+  const { email, password, name, nickname, username, phone } = req.body as {
     email?: string;
     password?: string;
     name?: string;
+    nickname?: string;
     username?: string;
     phone?: string;
   };
 
+  if (!name?.trim()) {
+    return res.status(400).json({ error: '이름을 입력해주세요.' });
+  }
   if (!email?.trim() || !password) {
     return res.status(400).json({ error: '이메일과 비밀번호를 입력해주세요.' });
   }
@@ -50,6 +55,7 @@ router.post('/register', async (req: Request, res: Response) => {
 
   const normalEmail = email.toLowerCase().trim();
   const normalUsername = username.trim().toLowerCase();
+  const normalPhone = phone?.trim() || null;
   const db = getDb();
 
   const existingEmail = await db.query('SELECT id FROM users WHERE email = $1', [normalEmail]);
@@ -62,10 +68,17 @@ router.post('/register', async (req: Request, res: Response) => {
     return res.status(409).json({ error: '이미 사용 중인 아이디입니다.' });
   }
 
+  if (normalPhone) {
+    const existingPhone = await db.query('SELECT id FROM users WHERE phone = $1', [normalPhone]);
+    if (existingPhone.rows.length > 0) {
+      return res.status(409).json({ error: '이미 가입된 전화번호입니다.' });
+    }
+  }
+
   const passwordHash = await bcrypt.hash(password, 12);
   const result = await db.query(
-    'INSERT INTO users (email, username, password_hash, name, phone) VALUES ($1, $2, $3, $4, $5) RETURNING id',
-    [normalEmail, normalUsername, passwordHash, name?.trim() || null, phone?.trim() || null],
+    'INSERT INTO users (email, username, password_hash, name, nickname, phone) VALUES ($1, $2, $3, $4, $5, $6) RETURNING id',
+    [normalEmail, normalUsername, passwordHash, name.trim(), nickname?.trim() || null, normalPhone],
   );
 
   const userId = result.rows[0].id;
@@ -76,8 +89,9 @@ router.post('/register', async (req: Request, res: Response) => {
       id: userId,
       email: normalEmail,
       username: normalUsername,
-      name: name?.trim() || null,
-      phone: phone?.trim() || null,
+      name: name.trim(),
+      nickname: nickname?.trim() || null,
+      phone: normalPhone,
     },
   });
 });
@@ -100,7 +114,7 @@ router.post('/login', async (req: Request, res: Response) => {
 
   return res.json({
     token: signToken(user.id, user.email),
-    user: { id: user.id, email: user.email, username: user.username, name: user.name, phone: user.phone },
+    user: { id: user.id, email: user.email, username: user.username, name: user.name, nickname: user.nickname, phone: user.phone },
   });
 });
 
@@ -108,7 +122,7 @@ router.post('/login', async (req: Request, res: Response) => {
 router.get('/me', requireAuth, async (req: AuthRequest, res: Response) => {
   const db = getDb();
   const result = await db.query(
-    'SELECT id, email, username, name, phone, created_at FROM users WHERE id = $1',
+    'SELECT id, email, username, name, nickname, phone, created_at FROM users WHERE id = $1',
     [req.userId],
   );
   const user = result.rows[0] as Omit<UserRow, 'password_hash'> | undefined;

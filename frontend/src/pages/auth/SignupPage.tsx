@@ -5,6 +5,7 @@ import { useAuth } from '../../contexts/AuthContext';
 
 export default function SignupPage() {
   const [name, setName] = useState('');
+  const [nickname, setNickname] = useState('');
   const [username, setUsername] = useState('');
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
@@ -24,7 +25,7 @@ export default function SignupPage() {
     setLoading(true);
     setError(null);
     try {
-      await signup(email, password, username, name.trim() || undefined, phone.trim() || undefined);
+      await signup(email, password, username, name.trim(), nickname.trim() || undefined, phone.trim() || undefined);
       navigate('/dashboard/generate');
     } catch (err) {
       setError(err instanceof Error ? err.message : '회원가입에 실패했습니다.');
@@ -38,7 +39,6 @@ export default function SignupPage() {
       <div className="absolute inset-0 bg-[radial-gradient(at_50%_0%,_hsla(275,80%,50%,0.12)_0,_transparent_60%)] pointer-events-none" />
 
       <div className="relative z-10 w-full max-w-md">
-        {/* Logo */}
         <Link to="/" className="flex items-center justify-center gap-2.5 mb-8 group">
           <div className="size-9 rounded-xl bg-gradient-to-br from-primary to-accent-pink flex items-center justify-center">
             <Sparkles size={19} className="text-white" />
@@ -62,14 +62,30 @@ export default function SignupPage() {
             {/* 이름 */}
             <div>
               <label className="text-[11px] font-semibold text-gray-500 uppercase tracking-widest mb-2 block">
-                이름 <span className="normal-case font-normal text-gray-600">(선택)</span>
+                이름
               </label>
               <input
                 type="text"
                 value={name}
                 onChange={e => setName(e.target.value)}
+                required
                 autoComplete="name"
                 placeholder="홍길동"
+                className="w-full bg-white/[0.04] border border-white/10 rounded-xl px-4 py-3 text-white placeholder-gray-600 text-sm focus:outline-none focus:border-primary/50 focus:bg-white/[0.06] transition-colors"
+              />
+            </div>
+
+            {/* 닉네임 */}
+            <div>
+              <label className="text-[11px] font-semibold text-gray-500 uppercase tracking-widest mb-2 block">
+                닉네임 <span className="normal-case font-normal text-gray-600">(선택)</span>
+              </label>
+              <input
+                type="text"
+                value={nickname}
+                onChange={e => setNickname(e.target.value)}
+                autoComplete="nickname"
+                placeholder="블로그에서 사용할 닉네임"
                 className="w-full bg-white/[0.04] border border-white/10 rounded-xl px-4 py-3 text-white placeholder-gray-600 text-sm focus:outline-none focus:border-primary/50 focus:bg-white/[0.06] transition-colors"
               />
             </div>
