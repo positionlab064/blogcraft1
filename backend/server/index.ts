@@ -23,7 +23,9 @@ const app = express();
 // ── 미들웨어 ────────────────────────────────────────────────
 app.use(
   cors({
-    origin: isDev ? ['http://localhost:3000', 'http://127.0.0.1:3000'] : process.env.APP_URL,
+    origin: isDev
+      ? ['http://localhost:3000', 'http://127.0.0.1:3000']
+      : (process.env.APP_URL ? process.env.APP_URL.split(',').map(s => s.trim()) : true),
     credentials: true,
   }),
 );
