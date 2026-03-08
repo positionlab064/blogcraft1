@@ -43,10 +43,12 @@ router.post('/classify', async (req: Request, res: Response) => {
   const results: PhotoResult[] = [];
   const db = getDb();
 
-  const insertStmt = db.prepare(`
-    INSERT INTO classified_photos (session_id, filename, category, confidence)
-    VALUES (?, ?, ?, ?)
-  `);
+  const insertPhoto = async (sessionId: string, filename: string, category: string, confidence: number) => {
+    await db.query(
+      'INSERT INTO classified_photos (session_id, filename, category, confidence) VALUES ($1, $2, $3, $4)',
+      [sessionId, filename, category, confidence],
+    );
+  };
 
   for (const photo of images) {
     try {
@@ -91,7 +93,7 @@ router.post('/classify', async (req: Request, res: Response) => {
       const category = CATEGORIES.includes(parsed.category) ? parsed.category : '기타';
       const confidence = Math.max(0, Math.min(1, parsed.confidence ?? 0.5));
 
-      insertStmt.run(sessionId, photo.filename, category, confidence);
+      await insertPhoto(sessionId, photo.filename, category, confidence);
 
       results.push({
         filename: photo.filename,
@@ -132,16 +134,15 @@ router.post('/classify', async (req: Request, res: Response) => {
 });
 
 // 세션별 분류 결과 조회
-router.get('/session/:sessionId', (req: Request, res: Response) => {
+router.get('/session/:sessionId', async (req: Request, res: Response) => {
   try {
     const db = getDb();
-    const rows = db
-      .prepare(
-        `SELECT filename, category, confidence, created_at
-         FROM classified_photos WHERE session_id = ? ORDER BY created_at`,
-      )
-      .all(req.params.sessionId);
-    return res.json(rows);
+    const result = await db.query(
+      `SELECT filename, category, confidence, created_at
+       FROM classified_photos WHERE session_id = $1 ORDER BY created_at`,
+      [req.params.sessionId],
+    );
+    return res.json(result.rows);
   } catch (err) {
     return res.status(500).json({ error: '조회 실패' });
   }

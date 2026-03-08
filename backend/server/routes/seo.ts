@@ -48,17 +48,10 @@ router.post('/analyze', async (req: Request, res: Response) => {
 
     // DB 저장
     const db = getDb();
-    db.prepare(`
-      INSERT INTO seo_analyses (keyword, title, content_length, score, issues, suggestions, keyword_density)
-      VALUES (?, ?, ?, ?, ?, ?, ?)
-    `).run(
-      keyword,
-      title,
-      content.length,
-      result.score,
-      JSON.stringify(result.issues),
-      JSON.stringify(result.suggestions),
-      result.keyword_density,
+    await db.query(
+      `INSERT INTO seo_analyses (keyword, title, content_length, score, issues, suggestions, keyword_density)
+       VALUES ($1, $2, $3, $4, $5, $6, $7)`,
+      [keyword, title, content.length, result.score, JSON.stringify(result.issues), JSON.stringify(result.suggestions), result.keyword_density],
     );
 
     return res.json(result);

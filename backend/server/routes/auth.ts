@@ -18,8 +18,8 @@ interface UserRow {
 
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
-function signToken(userId: number | bigint, email: string): string {
-  return jwt.sign({ userId: Number(userId), email }, JWT_SECRET, { expiresIn: '7d' });
+function signToken(userId: number, email: string): string {
+  return jwt.sign({ userId, email }, JWT_SECRET, { expiresIn: '7d' });
 }
 
 // POST /api/auth/register
@@ -52,26 +52,28 @@ router.post('/register', async (req: Request, res: Response) => {
   const normalUsername = username.trim().toLowerCase();
   const db = getDb();
 
-  const existingEmail = db.prepare('SELECT id FROM users WHERE email = ?').get(normalEmail);
-  if (existingEmail) {
+  const existingEmail = await db.query('SELECT id FROM users WHERE email = $1', [normalEmail]);
+  if (existingEmail.rows.length > 0) {
     return res.status(409).json({ error: '이미 사용 중인 이메일입니다.' });
   }
 
-  const existingUsername = db.prepare('SELECT id FROM users WHERE username = ?').get(normalUsername);
-  if (existingUsername) {
+  const existingUsername = await db.query('SELECT id FROM users WHERE username = $1', [normalUsername]);
+  if (existingUsername.rows.length > 0) {
     return res.status(409).json({ error: '이미 사용 중인 아이디입니다.' });
   }
 
   const passwordHash = await bcrypt.hash(password, 12);
-  const result = db
-    .prepare('INSERT INTO users (email, username, password_hash, name, phone) VALUES (?, ?, ?, ?, ?)')
-    .run(normalEmail, normalUsername, passwordHash, name?.trim() || null, phone?.trim() || null);
+  const result = await db.query(
+    'INSERT INTO users (email, username, password_hash, name, phone) VALUES ($1, $2, $3, $4, $5) RETURNING id',
+    [normalEmail, normalUsername, passwordHash, name?.trim() || null, phone?.trim() || null],
+  );
 
-  const token = signToken(result.lastInsertRowid, normalEmail);
+  const userId = result.rows[0].id;
+  const token = signToken(userId, normalEmail);
   return res.status(201).json({
     token,
     user: {
-      id: Number(result.lastInsertRowid),
+      id: userId,
       email: normalEmail,
       username: normalUsername,
       name: name?.trim() || null,
@@ -89,9 +91,8 @@ router.post('/login', async (req: Request, res: Response) => {
   }
 
   const db = getDb();
-  const user = db
-    .prepare('SELECT * FROM users WHERE username = ?')
-    .get(username.toLowerCase().trim()) as UserRow | undefined;
+  const result = await db.query('SELECT * FROM users WHERE username = $1', [username.toLowerCase().trim()]);
+  const user = result.rows[0] as UserRow | undefined;
 
   if (!user || !(await bcrypt.compare(password, user.password_hash))) {
     return res.status(401).json({ error: '아이디 또는 비밀번호가 올바르지 않습니다.' });
@@ -104,11 +105,13 @@ router.post('/login', async (req: Request, res: Response) => {
 });
 
 // GET /api/auth/me  (protected)
-router.get('/me', requireAuth, (req: AuthRequest, res: Response) => {
+router.get('/me', requireAuth, async (req: AuthRequest, res: Response) => {
   const db = getDb();
-  const user = db
-    .prepare('SELECT id, email, username, name, phone, created_at FROM users WHERE id = ?')
-    .get(req.userId) as Omit<UserRow, 'password_hash'> | undefined;
+  const result = await db.query(
+    'SELECT id, email, username, name, phone, created_at FROM users WHERE id = $1',
+    [req.userId],
+  );
+  const user = result.rows[0] as Omit<UserRow, 'password_hash'> | undefined;
 
   if (!user) return res.status(404).json({ error: '사용자를 찾을 수 없습니다.' });
   return res.json(user);

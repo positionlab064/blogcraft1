@@ -79,23 +79,14 @@ ${tagsText}
 
     // DB 저장
     const db = getDb();
-    const stmt = db.prepare(`
-      INSERT INTO generated_content (keyword, platform, tone, title, content, meta_description, tags, seo_score)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-    `);
-    const result = stmt.run(
-      keyword,
-      platform,
-      tone,
-      generated.title,
-      generated.content,
-      generated.meta_description,
-      JSON.stringify(generated.tags),
-      seoScore,
+    const result = await db.query(
+      `INSERT INTO generated_content (keyword, platform, tone, title, content, meta_description, tags, seo_score)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8) RETURNING id`,
+      [keyword, platform, tone, generated.title, generated.content, generated.meta_description, JSON.stringify(generated.tags), seoScore],
     );
 
     return res.json({
-      id: result.lastInsertRowid,
+      id: result.rows[0].id,
       keyword,
       platform,
       tone,
@@ -113,30 +104,26 @@ ${tagsText}
 });
 
 // 생성 히스토리 조회
-router.get('/history', (req: Request, res: Response) => {
+router.get('/history', async (req: Request, res: Response) => {
   try {
     const db = getDb();
-    const rows = db
-      .prepare(
-        `SELECT id, keyword, platform, tone, title, seo_score, created_at
-         FROM generated_content ORDER BY created_at DESC LIMIT 50`,
-      )
-      .all();
-    return res.json(rows);
+    const result = await db.query(
+      `SELECT id, keyword, platform, tone, title, seo_score, created_at
+       FROM generated_content ORDER BY created_at DESC LIMIT 50`,
+    );
+    return res.json(result.rows);
   } catch (err) {
     return res.status(500).json({ error: '히스토리 조회 실패' });
   }
 });
 
 // 특정 원고 조회
-router.get('/:id', (req: Request, res: Response) => {
+router.get('/:id', async (req: Request, res: Response) => {
   try {
     const db = getDb();
-    const row = db
-      .prepare('SELECT * FROM generated_content WHERE id = ?')
-      .get(req.params.id);
-    if (!row) return res.status(404).json({ error: '해당 원고를 찾을 수 없습니다.' });
-    return res.json(row);
+    const result = await db.query('SELECT * FROM generated_content WHERE id = $1', [req.params.id]);
+    if (result.rows.length === 0) return res.status(404).json({ error: '해당 원고를 찾을 수 없습니다.' });
+    return res.json(result.rows[0]);
   } catch (err) {
     return res.status(500).json({ error: '조회 실패' });
   }
