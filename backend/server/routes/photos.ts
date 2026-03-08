@@ -1,5 +1,5 @@
 import { Router, Request, Response } from 'express';
-import { GoogleGenAI } from '@google/genai';
+import OpenAI from 'openai';
 import { getDb } from '../db.js';
 import crypto from 'crypto';
 
@@ -33,12 +33,12 @@ router.post('/classify', async (req: Request, res: Response) => {
     return res.status(400).json({ error: '한 번에 최대 20장까지 처리할 수 있습니다.' });
   }
 
-  const apiKey = process.env.GEMINI_API_KEY;
+  const apiKey = process.env.OPENAI_API_KEY;
   if (!apiKey) {
-    return res.status(500).json({ error: 'GEMINI_API_KEY가 설정되지 않았습니다.' });
+    return res.status(500).json({ error: 'OPENAI_API_KEY가 설정되지 않았습니다.' });
   }
 
-  const ai = new GoogleGenAI({ apiKey });
+  const openai = new OpenAI({ apiKey });
   const sessionId = crypto.randomUUID();
   const results: PhotoResult[] = [];
   const db = getDb();
@@ -50,9 +50,10 @@ router.post('/classify', async (req: Request, res: Response) => {
 
   for (const photo of images) {
     try {
-      // base64 데이터에서 헤더 제거
-      const base64Data = photo.base64.replace(/^data:image\/[a-z]+;base64,/, '');
-      const mimeType = photo.mimeType ?? detectMimeType(photo.base64);
+      // base64 데이터 처리
+      const base64Data = photo.base64.startsWith('data:')
+        ? photo.base64
+        : `data:${photo.mimeType ?? 'image/jpeg'};base64,${photo.base64}`;
 
       const prompt = `이 이미지를 분석하여 다음 JSON 형식으로만 응답하세요:
 {
@@ -61,26 +62,22 @@ router.post('/classify', async (req: Request, res: Response) => {
   "description": "이미지 내용 한 줄 설명 (20자 이내)"
 }`;
 
-      const response = await ai.models.generateContent({
-        model: 'gemini-2.0-flash',
-        contents: [
+      const response = await openai.chat.completions.create({
+        model: 'gpt-4o-mini',
+        messages: [
           {
             role: 'user',
-            parts: [
-              {
-                inlineData: {
-                  mimeType,
-                  data: base64Data,
-                },
-              },
-              { text: prompt },
+            content: [
+              { type: 'image_url', image_url: { url: base64Data } },
+              { type: 'text', text: prompt },
             ],
           },
         ],
-        config: { temperature: 0.1, maxOutputTokens: 256 },
+        temperature: 0.1,
+        max_tokens: 256,
       });
 
-      const rawText = response.text ?? '';
+      const rawText = response.choices[0]?.message?.content ?? '';
       const jsonMatch = rawText.match(/\{[\s\S]*\}/);
 
       if (!jsonMatch) throw new Error('JSON 파싱 실패');
@@ -149,13 +146,5 @@ router.get('/session/:sessionId', (req: Request, res: Response) => {
     return res.status(500).json({ error: '조회 실패' });
   }
 });
-
-function detectMimeType(base64: string): string {
-  if (base64.startsWith('data:image/jpeg')) return 'image/jpeg';
-  if (base64.startsWith('data:image/png')) return 'image/png';
-  if (base64.startsWith('data:image/webp')) return 'image/webp';
-  if (base64.startsWith('data:image/gif')) return 'image/gif';
-  return 'image/jpeg'; // 기본값
-}
 
 export default router;
