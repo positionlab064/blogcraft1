@@ -139,6 +139,13 @@ export default function DashboardLayout() {
                 {user?.email}
               </span>
             </div>
+            <button
+              onClick={handleLogout}
+              title="로그아웃"
+              className="ml-1 p-1.5 rounded-lg text-gray-600 hover:text-red-400 hover:bg-red-500/[0.08] transition-all"
+            >
+              <LogOut size={15} />
+            </button>
           </div>
         </header>
 

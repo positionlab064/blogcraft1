@@ -1,240 +1,470 @@
 import { useState, useRef, useCallback } from 'react';
-import { motion } from 'motion/react';
-import { Image, Upload, Loader2, X, AlertCircle } from 'lucide-react';
-import { api, ClassifyRes } from '../../lib/api';
+import { motion, AnimatePresence } from 'motion/react';
+import { Image, Upload, Loader2, X, AlertCircle, Save, RotateCcw, Check, ChevronDown } from 'lucide-react';
+import { classifyMedia, buildSavePayload } from '../../lib/media/classifyMedia';
+import type { ClassifiedMediaItem } from '../../lib/media/classifyMedia';
+import { CATEGORY_META, ALL_IMAGE_CATEGORIES } from '../../lib/media/categoryMeta';
+import type { MediaCategory } from '../../lib/media/categoryMeta';
+import MediaCard from '../../components/photos/MediaCard';
 
-interface ImageFile {
+const MAX_FILES = 20;
+const ACCEPTED_MIME = ['image/jpeg', 'image/png', 'image/webp'];
+
+type FilterTab = 'all' | MediaCategory;
+
+interface UploadedFile {
   file: File;
   previewUrl: string;
-  filename: string;
-}
-
-const CATEGORY_STYLES: Record<string, string> = {
-  '음식': 'text-orange-300 bg-orange-400/10 border-orange-400/25',
-  '풍경': 'text-sky-300 bg-sky-400/10 border-sky-400/25',
-  '인물': 'text-pink-300 bg-pink-400/10 border-pink-400/25',
-  '동물': 'text-green-300 bg-green-400/10 border-green-400/25',
-  '건물/인테리어': 'text-violet-300 bg-violet-400/10 border-violet-400/25',
-  '제품': 'text-cyan-300 bg-cyan-400/10 border-cyan-400/25',
-  '텍스트/문서': 'text-yellow-300 bg-yellow-400/10 border-yellow-400/25',
-  '기타': 'text-gray-400 bg-gray-400/10 border-gray-400/25',
-};
-
-function categoryStyle(cat: string) {
-  return CATEGORY_STYLES[cat] ?? CATEGORY_STYLES['기타'];
-}
-
-function toBase64(file: File): Promise<string> {
-  return new Promise((resolve, reject) => {
-    const reader = new FileReader();
-    reader.onload = () => resolve(reader.result as string);
-    reader.onerror = reject;
-    reader.readAsDataURL(file);
-  });
 }
 
 export default function PhotosPage() {
-  const [images, setImages] = useState<ImageFile[]>([]);
+  // ── Upload state ────────────────────────────────────────────────────────
+  const [uploadedFiles, setUploadedFiles] = useState<UploadedFile[]>([]);
   const [isDragging, setIsDragging] = useState(false);
-  const [loading, setLoading] = useState(false);
-  const [result, setResult] = useState<ClassifyRes | null>(null);
-  const [error, setError] = useState<string | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
+  // ── Classification state ────────────────────────────────────────────────
+  const [classifiedItems, setClassifiedItems] = useState<ClassifiedMediaItem[]>([]);
+  const [isClassifying, setIsClassifying] = useState(false);
+
+  // ── UI state ────────────────────────────────────────────────────────────
+  const [selectedFilter, setSelectedFilter] = useState<FilterTab>('all');
+  const [bulkCategory, setBulkCategory] = useState<MediaCategory | ''>('');
+  const [errorMessage, setErrorMessage] = useState<string | null>(null);
+  const [isSaved, setIsSaved] = useState(false);
+
+  // ── Upload handlers ─────────────────────────────────────────────────────
   const addFiles = useCallback(
     (files: File[]) => {
-      const valid = files
-        .filter(f => f.type.startsWith('image/'))
-        .slice(0, Math.max(0, 20 - images.length));
-      const next: ImageFile[] = valid.map(file => ({
-        file,
-        previewUrl: URL.createObjectURL(file),
-        filename: file.name,
-      }));
-      setImages(prev => [...prev, ...next]);
+      const invalid = files.filter(f => !ACCEPTED_MIME.includes(f.type));
+      const valid = files.filter(f => ACCEPTED_MIME.includes(f.type));
+
+      if (invalid.length > 0) {
+        setErrorMessage(
+          `${invalid.length}개 파일이 지원되지 않는 형식입니다. (JPG, PNG, WebP만 가능)`,
+        );
+      }
+
+      const remaining = MAX_FILES - uploadedFiles.length;
+      if (valid.length > remaining) {
+        setErrorMessage(`최대 ${MAX_FILES}장까지 업로드할 수 있습니다. ${remaining}장만 추가됩니다.`);
+      }
+
+      const toAdd = valid.slice(0, remaining);
+      if (toAdd.length === 0) return;
+
+      setUploadedFiles(prev => [
+        ...prev,
+        ...toAdd.map(file => ({ file, previewUrl: URL.createObjectURL(file) })),
+      ]);
     },
-    [images.length],
+    [uploadedFiles.length],
   );
 
-  const removeImage = (idx: number) => {
-    setImages(prev => {
+  const removeUploadedFile = (idx: number) => {
+    setUploadedFiles(prev => {
       URL.revokeObjectURL(prev[idx].previewUrl);
       return prev.filter((_, i) => i !== idx);
     });
   };
 
   const clearAll = () => {
-    images.forEach(img => URL.revokeObjectURL(img.previewUrl));
-    setImages([]);
-    setResult(null);
-    setError(null);
+    uploadedFiles.forEach(f => URL.revokeObjectURL(f.previewUrl));
+    classifiedItems.forEach(item => URL.revokeObjectURL(item.previewUrl));
+    setUploadedFiles([]);
+    setClassifiedItems([]);
+    setSelectedFilter('all');
+    setErrorMessage(null);
+    setIsSaved(false);
+    setBulkCategory('');
   };
 
+  // ── Classify ────────────────────────────────────────────────────────────
   const handleClassify = async () => {
-    if (images.length === 0) return;
-    setLoading(true);
-    setError(null);
+    if (uploadedFiles.length === 0) return;
+    setIsClassifying(true);
+    setErrorMessage(null);
+    setIsSaved(false);
+
     try {
-      const b64Images = await Promise.all(
-        images.map(async img => ({
-          filename: img.filename,
-          base64: await toBase64(img.file),
-        })),
-      );
-      const res = await api.classifyPhotos(b64Images);
-      setResult(res);
+      const items = await classifyMedia(uploadedFiles.map(f => f.file));
+      setClassifiedItems(items);
+      setSelectedFilter('all');
+      // Release upload preview URLs (classified items have their own)
+      uploadedFiles.forEach(f => URL.revokeObjectURL(f.previewUrl));
+      setUploadedFiles([]);
     } catch (err) {
-      setError(err instanceof Error ? err.message : '분류 중 오류가 발생했습니다.');
+      setErrorMessage(err instanceof Error ? err.message : '분류 중 오류가 발생했습니다.');
     } finally {
-      setLoading(false);
+      setIsClassifying(false);
     }
   };
 
+  // ── Card CRUD ───────────────────────────────────────────────────────────
+  const updateItem = (id: string, patch: Partial<ClassifiedMediaItem>) => {
+    setClassifiedItems(prev => prev.map(item => (item.id === id ? { ...item, ...patch } : item)));
+    setIsSaved(false);
+  };
+
+  const removeItem = (id: string) => {
+    setClassifiedItems(prev => {
+      const item = prev.find(i => i.id === id);
+      if (item) URL.revokeObjectURL(item.previewUrl);
+      return prev.filter(i => i.id !== id);
+    });
+  };
+
+  // ── Bulk category change ────────────────────────────────────────────────
+  const handleBulkApply = () => {
+    if (!bulkCategory) return;
+    const cat = bulkCategory as MediaCategory;
+    const visibleIds = new Set(filteredItems.map(i => i.id));
+    setClassifiedItems(prev =>
+      prev.map(item =>
+        visibleIds.has(item.id) ? { ...item, confirmedCategory: cat } : item,
+      ),
+    );
+    setBulkCategory('');
+    setIsSaved(false);
+  };
+
+  // ── Save (localStorage mock) ────────────────────────────────────────────
+  const handleSave = () => {
+    const payload = buildSavePayload('store-demo', classifiedItems);
+    // TODO: Replace with real API call → api.saveMediaClassification(payload)
+    localStorage.setItem('classified_media_draft', JSON.stringify(payload));
+    setIsSaved(true);
+    setTimeout(() => setIsSaved(false), 2500);
+  };
+
+  // ── Filter ──────────────────────────────────────────────────────────────
+  const usedCategories = [
+    ...new Set(classifiedItems.map(i => i.confirmedCategory)),
+  ] as MediaCategory[];
+
+  const filteredItems =
+    selectedFilter === 'all'
+      ? classifiedItems
+      : classifiedItems.filter(i => i.confirmedCategory === selectedFilter);
+
+  const hasResults = classifiedItems.length > 0;
+  const showEmpty = !isClassifying && !hasResults && uploadedFiles.length === 0;
+
   return (
     <div className="max-w-5xl mx-auto">
+      {/* Header */}
       <div className="mb-7">
         <h1 className="text-2xl font-bold text-white mb-1">사진 자동 분류</h1>
-        <p className="text-gray-500 text-sm">사진을 업로드하면 AI가 음식, 풍경, 인물 등으로 자동 분류합니다.</p>
+        <p className="text-gray-500 text-sm">
+          사진을 업로드하면 AI가 음식, 풍경, 인물 등으로 자동 분류합니다.
+        </p>
       </div>
 
-      {/* Drop Zone */}
-      <div
-        className={`glass-card rounded-2xl p-8 border-2 border-dashed transition-all cursor-pointer mb-5 ${
-          isDragging
-            ? 'border-primary/60 bg-primary/[0.04] scale-[1.01]'
-            : 'border-white/[0.08] hover:border-white/20'
-        }`}
-        onDragOver={e => { e.preventDefault(); setIsDragging(true); }}
-        onDragLeave={() => setIsDragging(false)}
-        onDrop={e => { e.preventDefault(); setIsDragging(false); addFiles(Array.from(e.dataTransfer.files)); }}
-        onClick={() => fileInputRef.current?.click()}
-      >
-        <input
-          ref={fileInputRef}
-          type="file"
-          multiple
-          accept="image/*"
-          className="hidden"
-          onChange={e => { if (e.target.files) { addFiles(Array.from(e.target.files)); e.target.value = ''; } }}
-        />
-        <div className="flex flex-col items-center text-center pointer-events-none">
-          <div className={`w-14 h-14 rounded-2xl flex items-center justify-center mb-4 transition-colors ${
-            isDragging ? 'bg-primary/30' : 'bg-white/[0.04]'
-          }`}>
-            <Upload size={24} className={isDragging ? 'text-primary' : 'text-gray-600'} />
+      {/* ── Upload Zone (shown only before results) ── */}
+      {!hasResults && (
+        <>
+          <div
+            className={`glass-card rounded-2xl p-8 border-2 border-dashed transition-all cursor-pointer mb-5 ${
+              isDragging
+                ? 'border-primary/60 bg-primary/[0.04] scale-[1.01]'
+                : 'border-white/[0.08] hover:border-white/20'
+            }`}
+            onDragOver={e => {
+              e.preventDefault();
+              setIsDragging(true);
+            }}
+            onDragLeave={() => setIsDragging(false)}
+            onDrop={e => {
+              e.preventDefault();
+              setIsDragging(false);
+              addFiles(Array.from(e.dataTransfer.files));
+            }}
+            onClick={() => fileInputRef.current?.click()}
+          >
+            <input
+              ref={fileInputRef}
+              type="file"
+              multiple
+              accept="image/jpeg,image/png,image/webp"
+              className="hidden"
+              onChange={e => {
+                if (e.target.files) {
+                  addFiles(Array.from(e.target.files));
+                  e.target.value = '';
+                }
+              }}
+            />
+            <div className="flex flex-col items-center text-center pointer-events-none">
+              <div
+                className={`w-14 h-14 rounded-2xl flex items-center justify-center mb-4 transition-colors ${
+                  isDragging ? 'bg-primary/30' : 'bg-white/[0.04]'
+                }`}
+              >
+                <Upload size={24} className={isDragging ? 'text-primary' : 'text-gray-600'} />
+              </div>
+              <p className="text-white font-medium mb-1">
+                {isDragging ? '여기에 놓으세요!' : '사진을 끌어다 놓거나 클릭하여 선택'}
+              </p>
+              <p className="text-gray-600 text-sm">JPG, PNG, WebP · 최대 {MAX_FILES}장</p>
+            </div>
           </div>
-          <p className="text-white font-medium mb-1">
-            {isDragging ? '여기에 놓으세요!' : '사진을 끌어다 놓거나 클릭하여 선택'}
-          </p>
-          <p className="text-gray-600 text-sm">JPG, PNG, WebP · 최대 20장</p>
-        </div>
-      </div>
 
-      {/* Preview Grid */}
-      {images.length > 0 && (
-        <div className="glass-card rounded-2xl p-5 mb-5">
-          <div className="flex items-center justify-between mb-4">
-            <span className="text-sm font-medium text-gray-300">{images.length}장 선택됨</span>
-            <button onClick={clearAll} className="text-xs text-gray-600 hover:text-red-400 transition-colors">
-              전체 제거
-            </button>
-          </div>
-          <div className="grid grid-cols-5 sm:grid-cols-8 md:grid-cols-10 gap-2 mb-4">
-            {images.map((img, idx) => (
-              <div key={idx} className="relative group aspect-square">
-                <img
-                  src={img.previewUrl}
-                  alt={img.filename}
-                  className="w-full h-full object-cover rounded-lg border border-white/[0.07]"
-                />
+          {/* Preview grid */}
+          {uploadedFiles.length > 0 && (
+            <div className="glass-card rounded-2xl p-5 mb-5">
+              <div className="flex items-center justify-between mb-4">
+                <span className="text-sm font-medium text-gray-300">
+                  {uploadedFiles.length}장 선택됨
+                  {uploadedFiles.length >= MAX_FILES && (
+                    <span className="ml-2 text-xs text-yellow-500">(최대)</span>
+                  )}
+                </span>
                 <button
-                  onClick={e => { e.stopPropagation(); removeImage(idx); }}
-                  className="absolute -top-1 -right-1 w-5 h-5 rounded-full bg-black/90 border border-white/20 flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity"
+                  onClick={clearAll}
+                  className="text-xs text-gray-600 hover:text-red-400 transition-colors"
                 >
-                  <X size={9} className="text-white" />
+                  전체 제거
                 </button>
               </div>
-            ))}
-          </div>
-          <button
-            onClick={handleClassify}
-            disabled={loading}
-            className="w-full btn-primary py-3 flex items-center justify-center gap-2 text-sm disabled:opacity-40 disabled:cursor-not-allowed disabled:hover:scale-100"
-          >
-            {loading
-              ? <><Loader2 size={16} className="animate-spin" /> AI 분류 중...</>
-              : <><Image size={16} /> AI 분류 시작</>}
+
+              <div className="grid grid-cols-5 sm:grid-cols-8 md:grid-cols-10 gap-2 mb-4">
+                {uploadedFiles.map((f, idx) => (
+                  <div key={idx} className="relative group aspect-square">
+                    <img
+                      src={f.previewUrl}
+                      alt={f.file.name}
+                      className="w-full h-full object-cover rounded-lg border border-white/[0.07]"
+                    />
+                    <button
+                      onClick={e => {
+                        e.stopPropagation();
+                        removeUploadedFile(idx);
+                      }}
+                      className="absolute -top-1 -right-1 w-5 h-5 rounded-full bg-black/90 border border-white/20 flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity"
+                    >
+                      <X size={9} className="text-white" />
+                    </button>
+                  </div>
+                ))}
+              </div>
+
+              <button
+                onClick={handleClassify}
+                disabled={isClassifying}
+                className="w-full btn-primary py-3 flex items-center justify-center gap-2 text-sm disabled:opacity-40 disabled:cursor-not-allowed disabled:hover:scale-100"
+              >
+                {isClassifying ? (
+                  <>
+                    <Loader2 size={16} className="animate-spin" /> AI 분류 중...
+                  </>
+                ) : (
+                  <>
+                    <Image size={16} /> AI 분류 시작
+                  </>
+                )}
+              </button>
+            </div>
+          )}
+        </>
+      )}
+
+      {/* Error */}
+      {errorMessage && (
+        <div className="glass-card rounded-2xl p-4 border border-red-500/20 bg-red-500/5 text-red-400 text-sm mb-5 flex items-center gap-2">
+          <AlertCircle size={16} className="shrink-0" />
+          <span className="flex-1">{errorMessage}</span>
+          <button onClick={() => setErrorMessage(null)}>
+            <X size={14} />
           </button>
         </div>
       )}
 
-      {error && (
-        <div className="glass-card rounded-2xl p-4 border border-red-500/20 bg-red-500/5 text-red-400 text-sm mb-5 flex items-center gap-2">
-          <AlertCircle size={16} className="shrink-0" /> {error}
-        </div>
-      )}
+      {/* ── Results Panel ── */}
+      {hasResults && (
+        <motion.div initial={{ opacity: 0, y: 12 }} animate={{ opacity: 1, y: 0 }} className="space-y-4">
+          {/* Toolbar */}
+          <div className="glass-card rounded-2xl p-4">
+            <div className="flex flex-col sm:flex-row sm:items-center gap-3 flex-wrap">
+              {/* Stats */}
+              <div className="flex items-center gap-3 flex-1 min-w-0">
+                <span className="text-sm font-medium text-gray-300">
+                  총 {classifiedItems.length}장
+                </span>
+                <span className="text-xs text-gray-600">
+                  · 대표사진 {classifiedItems.filter(i => i.isRepresentative).length}장
+                </span>
+                <span className="text-xs text-gray-700">
+                  · {usedCategories.length}개 카테고리
+                </span>
+              </div>
 
-      {/* Results */}
-      {result && (
-        <motion.div initial={{ opacity: 0, y: 12 }} animate={{ opacity: 1, y: 0 }} className="space-y-5">
-          {/* Summary */}
-          <div className="glass-card rounded-2xl p-5">
-            <h2 className="text-white font-semibold text-sm mb-4">분류 요약 — 총 {result.total}장</h2>
-            <div className="grid grid-cols-2 sm:grid-cols-4 gap-2.5">
-              {result.summary.map(s => (
-                <div
-                  key={s.category}
-                  className={`rounded-xl p-3.5 border text-center ${categoryStyle(s.category)}`}
-                >
-                  <div className="text-2xl font-bold mb-0.5">{s.count}</div>
-                  <div className="text-xs font-medium">{s.category}</div>
+              {/* Actions */}
+              <div className="flex items-center gap-2 flex-wrap">
+                {/* Bulk category */}
+                <div className="flex items-center gap-1.5">
+                  <div className="relative">
+                    <select
+                      value={bulkCategory}
+                      onChange={e => setBulkCategory(e.target.value as MediaCategory | '')}
+                      className="text-xs bg-white/[0.04] border border-white/[0.08] rounded-lg pl-2.5 pr-7 py-1.5 text-gray-400 focus:outline-none focus:border-white/20 appearance-none cursor-pointer"
+                    >
+                      <option value="">
+                        {selectedFilter === 'all'
+                          ? '전체 일괄변경...'
+                          : `${CATEGORY_META[selectedFilter as MediaCategory]?.label ?? ''} 일괄변경...`}
+                      </option>
+                      {ALL_IMAGE_CATEGORIES.map(cat => (
+                        <option key={cat} value={cat} className="bg-[#0f0f1a]">
+                          {CATEGORY_META[cat].label}
+                        </option>
+                      ))}
+                    </select>
+                    <ChevronDown
+                      size={10}
+                      className="absolute right-2 top-1/2 -translate-y-1/2 pointer-events-none text-gray-600"
+                    />
+                  </div>
+                  {bulkCategory && (
+                    <button
+                      onClick={handleBulkApply}
+                      className="text-xs px-2.5 py-1.5 rounded-lg bg-primary/20 text-primary hover:bg-primary/30 transition-colors font-medium"
+                    >
+                      적용
+                    </button>
+                  )}
                 </div>
-              ))}
+
+                {/* Re-upload */}
+                <button
+                  onClick={() => {
+                    classifiedItems.forEach(item => URL.revokeObjectURL(item.previewUrl));
+                    setClassifiedItems([]);
+                    setSelectedFilter('all');
+                    setIsSaved(false);
+                  }}
+                  className="flex items-center gap-1.5 text-xs text-gray-500 hover:text-gray-300 transition-colors px-2.5 py-1.5 rounded-lg border border-white/[0.06] hover:border-white/[0.12]"
+                >
+                  <RotateCcw size={12} /> 재업로드
+                </button>
+
+                {/* Save */}
+                <button
+                  onClick={handleSave}
+                  className={`flex items-center gap-1.5 text-xs px-3 py-1.5 rounded-lg font-medium transition-all ${
+                    isSaved
+                      ? 'bg-green-500/15 text-green-400 border border-green-500/25'
+                      : 'btn-primary'
+                  }`}
+                >
+                  {isSaved ? (
+                    <>
+                      <Check size={12} /> 저장됨
+                    </>
+                  ) : (
+                    <>
+                      <Save size={12} /> 저장
+                    </>
+                  )}
+                </button>
+
+                {/* Clear all */}
+                <button
+                  onClick={clearAll}
+                  className="text-xs text-gray-600 hover:text-red-400 transition-colors px-2 py-1.5"
+                >
+                  초기화
+                </button>
+              </div>
             </div>
           </div>
 
-          {/* Grouped */}
-          {(Object.entries(result.grouped) as [string, typeof result.results]).map(([category, photos]) => (
-            <div key={category} className="glass-card rounded-2xl p-5">
-              <div className="flex items-center gap-2 mb-4">
-                <span className={`px-3 py-1 rounded-full text-xs font-semibold border ${categoryStyle(category)}`}>
-                  {category}
-                </span>
-                <span className="text-gray-600 text-sm">{photos.length}장</span>
-              </div>
-              <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-3">
-                {photos.map(photo => {
-                  const original = images.find(img => img.filename === photo.filename);
-                  return (
-                    <div key={photo.filename} className="space-y-1.5">
-                      {original && (
-                        <img
-                          src={original.previewUrl}
-                          alt={photo.filename}
-                          className="w-full aspect-square object-cover rounded-xl border border-white/[0.07]"
-                        />
-                      )}
-                      <p className="text-xs text-gray-400 truncate">{photo.filename}</p>
-                      {photo.description && photo.description !== '분류 실패' && (
-                        <p className="text-xs text-gray-600">{photo.description}</p>
-                      )}
-                      <p className="text-xs text-gray-700">신뢰도 {Math.round(photo.confidence * 100)}%</p>
-                    </div>
-                  );
-                })}
-              </div>
+          {/* Filter tabs */}
+          <div className="flex gap-1.5 overflow-x-auto pb-1" style={{ scrollbarWidth: 'none' }}>
+            <button
+              onClick={() => setSelectedFilter('all')}
+              className={`shrink-0 text-xs px-3.5 py-1.5 rounded-full border transition-all ${
+                selectedFilter === 'all'
+                  ? 'bg-white/10 border-white/20 text-white font-medium'
+                  : 'border-white/[0.06] text-gray-500 hover:text-gray-300 hover:border-white/10'
+              }`}
+            >
+              전체 {classifiedItems.length}
+            </button>
+
+            {usedCategories.map(cat => {
+              const count = classifiedItems.filter(i => i.confirmedCategory === cat).length;
+              const meta = CATEGORY_META[cat];
+              return (
+                <button
+                  key={cat}
+                  onClick={() => setSelectedFilter(cat)}
+                  className={`shrink-0 text-xs px-3.5 py-1.5 rounded-full border transition-all ${
+                    selectedFilter === cat
+                      ? `${meta.badgeClass} font-medium`
+                      : 'border-white/[0.06] text-gray-500 hover:text-gray-300 hover:border-white/10'
+                  }`}
+                >
+                  {meta.label} {count}
+                </button>
+              );
+            })}
+          </div>
+
+          {/* Card grid */}
+          {filteredItems.length > 0 ? (
+            <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 gap-3">
+              <AnimatePresence mode="popLayout">
+                {filteredItems.map(item => (
+                  <motion.div
+                    key={item.id}
+                    layout
+                    initial={{ opacity: 0, scale: 0.93 }}
+                    animate={{ opacity: 1, scale: 1 }}
+                    exit={{ opacity: 0, scale: 0.9 }}
+                    transition={{ duration: 0.15 }}
+                  >
+                    <MediaCard item={item} onChange={updateItem} onRemove={removeItem} />
+                  </motion.div>
+                ))}
+              </AnimatePresence>
             </div>
-          ))}
+          ) : (
+            <div className="glass-card rounded-2xl p-12 text-center">
+              <p className="text-gray-500 text-sm">
+                이 카테고리에 해당하는 사진이 없습니다.
+              </p>
+              <button
+                onClick={() => setSelectedFilter('all')}
+                className="mt-3 text-xs text-gray-600 hover:text-gray-400 transition-colors"
+              >
+                전체 보기
+              </button>
+            </div>
+          )}
         </motion.div>
       )}
 
-      {!loading && !result && images.length === 0 && (
+      {/* Loading state */}
+      {isClassifying && (
+        <div className="glass-card rounded-2xl p-16 flex flex-col items-center justify-center text-center min-h-[280px]">
+          <Loader2 size={32} className="text-primary animate-spin mb-4" />
+          <p className="text-gray-300 font-medium mb-1">AI가 사진을 분석하고 있습니다</p>
+          <p className="text-gray-600 text-sm">
+            {uploadedFiles.length > 0 ? `${uploadedFiles.length}장` : ''} 잠시만 기다려 주세요...
+          </p>
+        </div>
+      )}
+
+      {/* Empty state */}
+      {showEmpty && (
         <div className="glass-card rounded-2xl p-16 flex flex-col items-center justify-center text-center min-h-[280px]">
           <div className="w-16 h-16 rounded-2xl bg-white/[0.04] flex items-center justify-center mb-4">
             <Image size={26} className="text-gray-700" />
           </div>
           <p className="text-gray-400 font-medium mb-1">분류 결과가 여기에 표시됩니다</p>
-          <p className="text-gray-600 text-sm">사진을 업로드하면 AI가 자동으로 분류해드립니다</p>
+          <p className="text-gray-600 text-sm">
+            사진을 업로드하고 AI 분류를 실행하면 카테고리별로 정리됩니다
+          </p>
         </div>
       )}
     </div>
