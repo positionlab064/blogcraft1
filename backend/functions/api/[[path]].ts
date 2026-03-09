@@ -372,18 +372,19 @@ app.post('/api/photos/classify', requireAuth, async (c) => {
     try {
       const base64Data = photo.base64.replace(/^data:image\/[a-z]+;base64,/, '');
       const mimeType = photo.mimeType ?? (photo.base64.startsWith('data:image/png') ? 'image/png' : 'image/jpeg');
-      const prompt = `이 이미지를 분석하여 다음 JSON 형식으로만 응답하세요:\n{\n  "category": "${CATEGORIES.join('" | "')}",\n  "confidence": 0.0~1.0,\n  "description": "이미지 내용 한 줄 설명 (20자 이내)"\n}`;
-      const response = await ai.models.generateContent({ model: 'gemini-2.0-flash', contents: [{ role: 'user', parts: [{ inlineData: { mimeType, data: base64Data } }, { text: prompt }] }], config: { temperature: 0.1, maxOutputTokens: 256 } });
+      const prompt = `이 이미지를 분석하여 아래 카테고리 중 하나로 분류하세요.\n\n카테고리 목록:\n${CATEGORIES.map((c, i) => `${i + 1}. ${c}`).join('\n')}\n\n반드시 다음 JSON 형식으로만 응답하세요 (다른 텍스트 없이):\n{"category": "카테고리명", "confidence": 0.9, "description": "한 줄 설명"}`;
+      const response = await ai.models.generateContent({ model: 'gemini-2.0-flash', contents: [{ role: 'user', parts: [{ inlineData: { mimeType, data: base64Data } }, { text: prompt }] }], config: { temperature: 0.1, maxOutputTokens: 200, responseMimeType: 'application/json' } });
       const rawText = response.text ?? '';
       const jsonMatch = rawText.match(/\{[\s\S]*\}/);
-      if (!jsonMatch) throw new Error('JSON 파싱 실패');
+      if (!jsonMatch) throw new Error(`JSON 파싱 실패: ${rawText.slice(0, 100)}`);
       const parsed = JSON.parse(jsonMatch[0]) as any;
       const category = CATEGORIES.includes(parsed.category) ? parsed.category : '기타';
       const confidence = Math.max(0, Math.min(1, parsed.confidence ?? 0.5));
       await c.env.DB.prepare('INSERT INTO classified_photos (session_id, filename, category, confidence) VALUES (?, ?, ?, ?)').bind(sessionId, photo.filename, category, confidence).run();
-      results.push({ filename: photo.filename, category, confidence, description: parsed.description ?? '' });
-    } catch {
-      results.push({ filename: photo.filename, category: '기타', confidence: 0, description: '분류 실패' });
+      results.push({ filename: photo.filename, category, confidence, description: parsed.description ?? '', raw: parsed.category });
+    } catch (err) {
+      const errMsg = err instanceof Error ? err.message : String(err);
+      results.push({ filename: photo.filename, category: '기타', confidence: 0, description: `분류 실패: ${errMsg.slice(0, 50)}` });
     }
   }
 
