@@ -40,7 +40,8 @@ app.use(
       // origin이 없으면 (Postman, curl 등) 허용
       if (!origin) return callback(null, true);
       if (allowedOrigins.includes(origin)) return callback(null, true);
-      callback(new Error(`CORS blocked: ${origin}`));
+      // 에러 대신 false 반환 → 5xx 없이 CORS 헤더만 미설정
+      callback(null, false);
     },
     credentials: true,
   }),
