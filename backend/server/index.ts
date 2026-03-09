@@ -21,14 +21,7 @@ const isDev = process.env.NODE_ENV !== 'production';
 const app = express();
 
 // ── 미들웨어 ────────────────────────────────────────────────
-app.use(
-  cors({
-    origin: isDev
-      ? ['http://localhost:3000', 'http://127.0.0.1:3000']
-      : (process.env.APP_URL ? process.env.APP_URL.split(',').map(s => s.trim()) : true),
-    credentials: true,
-  }),
-);
+app.use(cors({ origin: '*' }));
 
 app.use(express.json({ limit: '50mb' }));
 app.use(express.urlencoded({ extended: true, limit: '50mb' }));
