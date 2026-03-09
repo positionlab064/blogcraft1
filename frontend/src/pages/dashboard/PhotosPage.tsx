@@ -1,22 +1,76 @@
 import { useState, useRef, useCallback } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
-import { Image, Upload, Loader2, X, AlertCircle, Save, RotateCcw, Check, ChevronDown } from 'lucide-react';
-import { classifyMedia, buildSavePayload } from '../../lib/media/classifyMedia';
-import type { ClassifiedMediaItem } from '../../lib/media/classifyMedia';
+import {
+  Image, Upload, Loader2, X, AlertCircle, Save, RotateCcw, Check,
+  ChevronDown, Layers, ChevronRight, ChevronLeft,
+} from 'lucide-react';
+import { classifyMedia, buildSavePayload, distributeIntoPosts } from '../../lib/media/classifyMedia';
+import type { ClassifiedMediaItem, PostDraft } from '../../lib/media/classifyMedia';
 import { CATEGORY_META, ALL_IMAGE_CATEGORIES } from '../../lib/media/categoryMeta';
 import type { MediaCategory } from '../../lib/media/categoryMeta';
 import MediaCard from '../../components/photos/MediaCard';
 
-const MAX_FILES = Infinity;
 const ACCEPTED_MIME = ['image/jpeg', 'image/png', 'image/webp'];
+const MIN_PHOTOS_PER_POST = 20;
+const MAX_PHOTOS_PER_POST = 50;
 
 type FilterTab = 'all' | MediaCategory;
+type PageView = 'classify' | 'distribute';
 
 interface UploadedFile {
   file: File;
   previewUrl: string;
 }
 
+// ─── Post Preview Card ──────────────────────────────────────────────────────
+function PostPreviewCard({ draft }: { draft: PostDraft }) {
+  const catCounts = new Map<MediaCategory, number>();
+  draft.items.forEach(item => {
+    const cat = item.confirmedCategory;
+    catCounts.set(cat, (catCounts.get(cat) ?? 0) + 1);
+  });
+  const thumbs = draft.items.slice(0, 6);
+
+  return (
+    <div className="glass-card rounded-2xl p-4">
+      <div className="flex items-center justify-between mb-3">
+        <span className="text-sm font-semibold text-white">게시물 {draft.postIndex}</span>
+        <span className="text-xs text-gray-500">{draft.items.length}장</span>
+      </div>
+
+      {/* Thumbnails */}
+      <div className="grid grid-cols-6 gap-1 mb-3">
+        {thumbs.map(item => (
+          <div key={item.id} className="aspect-square rounded-md overflow-hidden bg-white/[0.04]">
+            <img src={item.previewUrl} alt="" className="w-full h-full object-cover" />
+          </div>
+        ))}
+        {draft.items.length > 6 && (
+          <div className="aspect-square rounded-md bg-white/[0.04] flex items-center justify-center col-span-1 relative -ml-1">
+            <span className="text-xs text-gray-500">+{draft.items.length - 6}</span>
+          </div>
+        )}
+      </div>
+
+      {/* Category breakdown */}
+      <div className="flex flex-wrap gap-1">
+        {[...catCounts.entries()].map(([cat, count]) => {
+          const meta = CATEGORY_META[cat];
+          return (
+            <span
+              key={cat}
+              className={`text-[10px] px-1.5 py-0.5 rounded-full border ${meta.badgeClass}`}
+            >
+              {meta.label} {count}
+            </span>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
+// ─── Main Page ──────────────────────────────────────────────────────────────
 export default function PhotosPage() {
   // ── Upload state ────────────────────────────────────────────────────────
   const [uploadedFiles, setUploadedFiles] = useState<UploadedFile[]>([]);
@@ -26,35 +80,33 @@ export default function PhotosPage() {
   // ── Classification state ────────────────────────────────────────────────
   const [classifiedItems, setClassifiedItems] = useState<ClassifiedMediaItem[]>([]);
   const [isClassifying, setIsClassifying] = useState(false);
+  const [classifyProgress, setClassifyProgress] = useState<{ done: number; total: number } | null>(null);
 
   // ── UI state ────────────────────────────────────────────────────────────
+  const [pageView, setPageView] = useState<PageView>('classify');
   const [selectedFilter, setSelectedFilter] = useState<FilterTab>('all');
   const [bulkCategory, setBulkCategory] = useState<MediaCategory | ''>('');
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [isSaved, setIsSaved] = useState(false);
 
+  // ── Distribution state ──────────────────────────────────────────────────
+  const [postCount, setPostCount] = useState(3);
+  const [postDrafts, setPostDrafts] = useState<PostDraft[]>([]);
+  const [isDistributed, setIsDistributed] = useState(false);
+
   // ── Upload handlers ─────────────────────────────────────────────────────
-  const addFiles = useCallback(
-    (files: File[]) => {
-      const invalid = files.filter(f => !ACCEPTED_MIME.includes(f.type));
-      const valid = files.filter(f => ACCEPTED_MIME.includes(f.type));
-
-      if (invalid.length > 0) {
-        setErrorMessage(
-          `${invalid.length}개 파일이 지원되지 않는 형식입니다. (JPG, PNG, WebP만 가능)`,
-        );
-      }
-
-      const toAdd = valid;
-      if (toAdd.length === 0) return;
-
-      setUploadedFiles(prev => [
-        ...prev,
-        ...toAdd.map(file => ({ file, previewUrl: URL.createObjectURL(file) })),
-      ]);
-    },
-    [uploadedFiles.length],
-  );
+  const addFiles = useCallback((files: File[]) => {
+    const invalid = files.filter(f => !ACCEPTED_MIME.includes(f.type));
+    const valid = files.filter(f => ACCEPTED_MIME.includes(f.type));
+    if (invalid.length > 0) {
+      setErrorMessage(`${invalid.length}개 파일이 지원되지 않는 형식입니다. (JPG, PNG, WebP만 가능)`);
+    }
+    if (valid.length === 0) return;
+    setUploadedFiles(prev => [
+      ...prev,
+      ...valid.map(file => ({ file, previewUrl: URL.createObjectURL(file) })),
+    ]);
+  }, []);
 
   const removeUploadedFile = (idx: number) => {
     setUploadedFiles(prev => {
@@ -72,6 +124,10 @@ export default function PhotosPage() {
     setErrorMessage(null);
     setIsSaved(false);
     setBulkCategory('');
+    setPageView('classify');
+    setPostDrafts([]);
+    setIsDistributed(false);
+    setClassifyProgress(null);
   };
 
   // ── Classify ────────────────────────────────────────────────────────────
@@ -80,18 +136,26 @@ export default function PhotosPage() {
     setIsClassifying(true);
     setErrorMessage(null);
     setIsSaved(false);
+    setClassifyProgress({ done: 0, total: uploadedFiles.length });
 
     try {
-      const items = await classifyMedia(uploadedFiles.map(f => f.file));
+      const items = await classifyMedia(
+        uploadedFiles.map(f => f.file),
+        (done, total) => setClassifyProgress({ done, total }),
+      );
       setClassifiedItems(items);
       setSelectedFilter('all');
-      // Release upload preview URLs (classified items have their own)
+      // Auto-calculate suggested post count
+      const imageCount = items.filter(i => i.fileType === 'image').length;
+      const suggested = Math.max(1, Math.ceil(imageCount / 30));
+      setPostCount(suggested);
       uploadedFiles.forEach(f => URL.revokeObjectURL(f.previewUrl));
       setUploadedFiles([]);
     } catch (err) {
       setErrorMessage(err instanceof Error ? err.message : '분류 중 오류가 발생했습니다.');
     } finally {
       setIsClassifying(false);
+      setClassifyProgress(null);
     }
   };
 
@@ -99,6 +163,7 @@ export default function PhotosPage() {
   const updateItem = (id: string, patch: Partial<ClassifiedMediaItem>) => {
     setClassifiedItems(prev => prev.map(item => (item.id === id ? { ...item, ...patch } : item)));
     setIsSaved(false);
+    setIsDistributed(false);
   };
 
   const removeItem = (id: string) => {
@@ -107,55 +172,100 @@ export default function PhotosPage() {
       if (item) URL.revokeObjectURL(item.previewUrl);
       return prev.filter(i => i.id !== id);
     });
+    setIsDistributed(false);
   };
 
-  // ── Bulk category change ────────────────────────────────────────────────
+  // ── Bulk category change ─────────────────────────────────────────────────
   const handleBulkApply = () => {
     if (!bulkCategory) return;
     const cat = bulkCategory as MediaCategory;
     const visibleIds = new Set(filteredItems.map(i => i.id));
     setClassifiedItems(prev =>
-      prev.map(item =>
-        visibleIds.has(item.id) ? { ...item, confirmedCategory: cat } : item,
-      ),
+      prev.map(item => visibleIds.has(item.id) ? { ...item, confirmedCategory: cat } : item),
     );
     setBulkCategory('');
     setIsSaved(false);
+    setIsDistributed(false);
   };
 
-  // ── Save (localStorage mock) ────────────────────────────────────────────
+  // ── Save ─────────────────────────────────────────────────────────────────
   const handleSave = () => {
     const payload = buildSavePayload('store-demo', classifiedItems);
-    // TODO: Replace with real API call → api.saveMediaClassification(payload)
     localStorage.setItem('classified_media_draft', JSON.stringify(payload));
     setIsSaved(true);
     setTimeout(() => setIsSaved(false), 2500);
   };
 
-  // ── Filter ──────────────────────────────────────────────────────────────
-  const usedCategories = [
-    ...new Set(classifiedItems.map(i => i.confirmedCategory)),
-  ] as MediaCategory[];
+  // ── Distribution ─────────────────────────────────────────────────────────
+  const handleDistribute = () => {
+    const drafts = distributeIntoPosts(classifiedItems, postCount);
+    setPostDrafts(drafts);
+    setIsDistributed(true);
+  };
 
+  const handleSaveDistribution = () => {
+    localStorage.setItem('post_drafts', JSON.stringify(
+      postDrafts.map(d => ({
+        postIndex: d.postIndex,
+        photoCount: d.items.length,
+        categories: [...new Set(d.items.map(i => i.confirmedCategory))],
+        fileNames: d.items.map(i => i.fileName),
+      })),
+    ));
+    alert(`${postDrafts.length}개 게시물로 배분이 저장되었습니다.`);
+  };
+
+  // ── Computed values ──────────────────────────────────────────────────────
+  const usedCategories = [...new Set(classifiedItems.map(i => i.confirmedCategory))] as MediaCategory[];
   const filteredItems =
     selectedFilter === 'all'
       ? classifiedItems
       : classifiedItems.filter(i => i.confirmedCategory === selectedFilter);
-
   const hasResults = classifiedItems.length > 0;
-  const showEmpty = !isClassifying && !hasResults && uploadedFiles.length === 0;
+  const imageCount = classifiedItems.filter(i => i.fileType === 'image').length;
+  const maxPostCount = Math.floor(imageCount / MIN_PHOTOS_PER_POST);
+  const minPostCount = Math.max(1, Math.ceil(imageCount / MAX_PHOTOS_PER_POST));
+  const photosPerPost = postCount > 0 ? Math.round(imageCount / postCount) : 0;
 
   return (
     <div className="max-w-5xl mx-auto">
       {/* Header */}
-      <div className="mb-7">
-        <h1 className="text-2xl font-bold text-white mb-1">사진 자동 분류</h1>
-        <p className="text-gray-500 text-sm">
-          사진을 업로드하면 AI가 음식, 풍경, 인물 등으로 자동 분류합니다.
-        </p>
+      <div className="mb-7 flex items-center justify-between">
+        <div>
+          <h1 className="text-2xl font-bold text-white mb-1">사진 자동 분류</h1>
+          <p className="text-gray-500 text-sm">
+            AI가 음식점 사진을 카테고리별로 분류하고 게시물에 자동 배분합니다.
+          </p>
+        </div>
+
+        {/* View toggle */}
+        {hasResults && (
+          <div className="flex items-center gap-1 bg-white/[0.04] rounded-xl p-1 border border-white/[0.06]">
+            <button
+              onClick={() => setPageView('classify')}
+              className={`flex items-center gap-1.5 text-xs px-3 py-1.5 rounded-lg transition-all ${
+                pageView === 'classify'
+                  ? 'bg-white/10 text-white font-medium'
+                  : 'text-gray-500 hover:text-gray-300'
+              }`}
+            >
+              <Image size={12} /> 분류 결과
+            </button>
+            <button
+              onClick={() => setPageView('distribute')}
+              className={`flex items-center gap-1.5 text-xs px-3 py-1.5 rounded-lg transition-all ${
+                pageView === 'distribute'
+                  ? 'bg-white/10 text-white font-medium'
+                  : 'text-gray-500 hover:text-gray-300'
+              }`}
+            >
+              <Layers size={12} /> 게시물 배분
+            </button>
+          </div>
+        )}
       </div>
 
-      {/* ── Upload Zone (shown only before results) ── */}
+      {/* ── Upload Zone ── */}
       {!hasResults && (
         <>
           <div
@@ -164,16 +274,9 @@ export default function PhotosPage() {
                 ? 'border-primary/60 bg-primary/[0.04] scale-[1.01]'
                 : 'border-white/[0.08] hover:border-white/20'
             }`}
-            onDragOver={e => {
-              e.preventDefault();
-              setIsDragging(true);
-            }}
+            onDragOver={e => { e.preventDefault(); setIsDragging(true); }}
             onDragLeave={() => setIsDragging(false)}
-            onDrop={e => {
-              e.preventDefault();
-              setIsDragging(false);
-              addFiles(Array.from(e.dataTransfer.files));
-            }}
+            onDrop={e => { e.preventDefault(); setIsDragging(false); addFiles(Array.from(e.dataTransfer.files)); }}
             onClick={() => fileInputRef.current?.click()}
           >
             <input
@@ -182,56 +285,31 @@ export default function PhotosPage() {
               multiple
               accept="image/jpeg,image/png,image/webp"
               className="hidden"
-              onChange={e => {
-                if (e.target.files) {
-                  addFiles(Array.from(e.target.files));
-                  e.target.value = '';
-                }
-              }}
+              onChange={e => { if (e.target.files) { addFiles(Array.from(e.target.files)); e.target.value = ''; } }}
             />
             <div className="flex flex-col items-center text-center pointer-events-none">
-              <div
-                className={`w-14 h-14 rounded-2xl flex items-center justify-center mb-4 transition-colors ${
-                  isDragging ? 'bg-primary/30' : 'bg-white/[0.04]'
-                }`}
-              >
+              <div className={`w-14 h-14 rounded-2xl flex items-center justify-center mb-4 transition-colors ${isDragging ? 'bg-primary/30' : 'bg-white/[0.04]'}`}>
                 <Upload size={24} className={isDragging ? 'text-primary' : 'text-gray-600'} />
               </div>
               <p className="text-white font-medium mb-1">
                 {isDragging ? '여기에 놓으세요!' : '사진을 끌어다 놓거나 클릭하여 선택'}
               </p>
-              <p className="text-gray-600 text-sm">JPG, PNG, WebP</p>
+              <p className="text-gray-600 text-sm">JPG, PNG, WebP · 개수 제한 없음</p>
             </div>
           </div>
 
-          {/* Preview grid */}
           {uploadedFiles.length > 0 && (
             <div className="glass-card rounded-2xl p-5 mb-5">
               <div className="flex items-center justify-between mb-4">
-                <span className="text-sm font-medium text-gray-300">
-                  {uploadedFiles.length}장 선택됨
-                </span>
-                <button
-                  onClick={clearAll}
-                  className="text-xs text-gray-600 hover:text-red-400 transition-colors"
-                >
-                  전체 제거
-                </button>
+                <span className="text-sm font-medium text-gray-300">{uploadedFiles.length}장 선택됨</span>
+                <button onClick={clearAll} className="text-xs text-gray-600 hover:text-red-400 transition-colors">전체 제거</button>
               </div>
-
               <div className="grid grid-cols-5 sm:grid-cols-8 md:grid-cols-10 gap-2 mb-4">
                 {uploadedFiles.map((f, idx) => (
                   <div key={idx} className="relative group aspect-square">
-                    <img
-                      src={f.previewUrl}
-                      alt={f.file.name}
-                      className="w-full h-full object-cover rounded-lg border border-white/[0.07]"
-                    />
+                    <img src={f.previewUrl} alt={f.file.name} className="w-full h-full object-cover rounded-lg border border-white/[0.07]" />
                     <button
-                      onClick={e => {
-                        e.stopPropagation();
-                        removeUploadedFile(idx);
-                      }}
+                      onClick={e => { e.stopPropagation(); removeUploadedFile(idx); }}
                       className="absolute -top-1 -right-1 w-5 h-5 rounded-full bg-black/90 border border-white/20 flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity"
                     >
                       <X size={9} className="text-white" />
@@ -239,21 +317,12 @@ export default function PhotosPage() {
                   </div>
                 ))}
               </div>
-
               <button
                 onClick={handleClassify}
                 disabled={isClassifying}
-                className="w-full btn-primary py-3 flex items-center justify-center gap-2 text-sm disabled:opacity-40 disabled:cursor-not-allowed disabled:hover:scale-100"
+                className="w-full btn-primary py-3 flex items-center justify-center gap-2 text-sm disabled:opacity-40 disabled:cursor-not-allowed"
               >
-                {isClassifying ? (
-                  <>
-                    <Loader2 size={16} className="animate-spin" /> AI 분류 중...
-                  </>
-                ) : (
-                  <>
-                    <Image size={16} /> AI 분류 시작
-                  </>
-                )}
+                <Image size={16} /> AI 분류 시작 ({uploadedFiles.length}장)
               </button>
             </div>
           )}
@@ -265,32 +334,21 @@ export default function PhotosPage() {
         <div className="glass-card rounded-2xl p-4 border border-red-500/20 bg-red-500/5 text-red-400 text-sm mb-5 flex items-center gap-2">
           <AlertCircle size={16} className="shrink-0" />
           <span className="flex-1">{errorMessage}</span>
-          <button onClick={() => setErrorMessage(null)}>
-            <X size={14} />
-          </button>
+          <button onClick={() => setErrorMessage(null)}><X size={14} /></button>
         </div>
       )}
 
       {/* ── Results Panel ── */}
-      {hasResults && (
+      {hasResults && pageView === 'classify' && (
         <motion.div initial={{ opacity: 0, y: 12 }} animate={{ opacity: 1, y: 0 }} className="space-y-4">
           {/* Toolbar */}
           <div className="glass-card rounded-2xl p-4">
             <div className="flex flex-col sm:flex-row sm:items-center gap-3 flex-wrap">
-              {/* Stats */}
               <div className="flex items-center gap-3 flex-1 min-w-0">
-                <span className="text-sm font-medium text-gray-300">
-                  총 {classifiedItems.length}장
-                </span>
-                <span className="text-xs text-gray-600">
-                  · 대표사진 {classifiedItems.filter(i => i.isRepresentative).length}장
-                </span>
-                <span className="text-xs text-gray-700">
-                  · {usedCategories.length}개 카테고리
-                </span>
+                <span className="text-sm font-medium text-gray-300">총 {classifiedItems.length}장</span>
+                <span className="text-xs text-gray-600">· 대표사진 {classifiedItems.filter(i => i.isRepresentative).length}장</span>
+                <span className="text-xs text-gray-700">· {usedCategories.length}개 카테고리</span>
               </div>
-
-              {/* Actions */}
               <div className="flex items-center gap-2 flex-wrap">
                 {/* Bulk category */}
                 <div className="flex items-center gap-1.5">
@@ -300,72 +358,33 @@ export default function PhotosPage() {
                       onChange={e => setBulkCategory(e.target.value as MediaCategory | '')}
                       className="text-xs bg-white/[0.04] border border-white/[0.08] rounded-lg pl-2.5 pr-7 py-1.5 text-gray-400 focus:outline-none focus:border-white/20 appearance-none cursor-pointer"
                     >
-                      <option value="">
-                        {selectedFilter === 'all'
-                          ? '전체 일괄변경...'
-                          : `${CATEGORY_META[selectedFilter as MediaCategory]?.label ?? ''} 일괄변경...`}
-                      </option>
+                      <option value="">{selectedFilter === 'all' ? '전체 일괄변경...' : `${CATEGORY_META[selectedFilter as MediaCategory]?.label ?? ''} 일괄변경...`}</option>
                       {ALL_IMAGE_CATEGORIES.map(cat => (
-                        <option key={cat} value={cat} className="bg-[#0f0f1a]">
-                          {CATEGORY_META[cat].label}
-                        </option>
+                        <option key={cat} value={cat} className="bg-[#0f0f1a]">{CATEGORY_META[cat].label}</option>
                       ))}
                     </select>
-                    <ChevronDown
-                      size={10}
-                      className="absolute right-2 top-1/2 -translate-y-1/2 pointer-events-none text-gray-600"
-                    />
+                    <ChevronDown size={10} className="absolute right-2 top-1/2 -translate-y-1/2 pointer-events-none text-gray-600" />
                   </div>
                   {bulkCategory && (
-                    <button
-                      onClick={handleBulkApply}
-                      className="text-xs px-2.5 py-1.5 rounded-lg bg-primary/20 text-primary hover:bg-primary/30 transition-colors font-medium"
-                    >
-                      적용
-                    </button>
+                    <button onClick={handleBulkApply} className="text-xs px-2.5 py-1.5 rounded-lg bg-primary/20 text-primary hover:bg-primary/30 transition-colors font-medium">적용</button>
                   )}
                 </div>
 
-                {/* Re-upload */}
                 <button
-                  onClick={() => {
-                    classifiedItems.forEach(item => URL.revokeObjectURL(item.previewUrl));
-                    setClassifiedItems([]);
-                    setSelectedFilter('all');
-                    setIsSaved(false);
-                  }}
+                  onClick={() => { classifiedItems.forEach(item => URL.revokeObjectURL(item.previewUrl)); setClassifiedItems([]); setSelectedFilter('all'); setIsSaved(false); setIsDistributed(false); }}
                   className="flex items-center gap-1.5 text-xs text-gray-500 hover:text-gray-300 transition-colors px-2.5 py-1.5 rounded-lg border border-white/[0.06] hover:border-white/[0.12]"
                 >
                   <RotateCcw size={12} /> 재업로드
                 </button>
 
-                {/* Save */}
                 <button
                   onClick={handleSave}
-                  className={`flex items-center gap-1.5 text-xs px-3 py-1.5 rounded-lg font-medium transition-all ${
-                    isSaved
-                      ? 'bg-green-500/15 text-green-400 border border-green-500/25'
-                      : 'btn-primary'
-                  }`}
+                  className={`flex items-center gap-1.5 text-xs px-3 py-1.5 rounded-lg font-medium transition-all ${isSaved ? 'bg-green-500/15 text-green-400 border border-green-500/25' : 'btn-primary'}`}
                 >
-                  {isSaved ? (
-                    <>
-                      <Check size={12} /> 저장됨
-                    </>
-                  ) : (
-                    <>
-                      <Save size={12} /> 저장
-                    </>
-                  )}
+                  {isSaved ? <><Check size={12} /> 저장됨</> : <><Save size={12} /> 저장</>}
                 </button>
 
-                {/* Clear all */}
-                <button
-                  onClick={clearAll}
-                  className="text-xs text-gray-600 hover:text-red-400 transition-colors px-2 py-1.5"
-                >
-                  초기화
-                </button>
+                <button onClick={clearAll} className="text-xs text-gray-600 hover:text-red-400 transition-colors px-2 py-1.5">초기화</button>
               </div>
             </div>
           </div>
@@ -374,15 +393,10 @@ export default function PhotosPage() {
           <div className="flex gap-1.5 overflow-x-auto pb-1" style={{ scrollbarWidth: 'none' }}>
             <button
               onClick={() => setSelectedFilter('all')}
-              className={`shrink-0 text-xs px-3.5 py-1.5 rounded-full border transition-all ${
-                selectedFilter === 'all'
-                  ? 'bg-white/10 border-white/20 text-white font-medium'
-                  : 'border-white/[0.06] text-gray-500 hover:text-gray-300 hover:border-white/10'
-              }`}
+              className={`shrink-0 text-xs px-3.5 py-1.5 rounded-full border transition-all ${selectedFilter === 'all' ? 'bg-white/10 border-white/20 text-white font-medium' : 'border-white/[0.06] text-gray-500 hover:text-gray-300 hover:border-white/10'}`}
             >
               전체 {classifiedItems.length}
             </button>
-
             {usedCategories.map(cat => {
               const count = classifiedItems.filter(i => i.confirmedCategory === cat).length;
               const meta = CATEGORY_META[cat];
@@ -390,11 +404,7 @@ export default function PhotosPage() {
                 <button
                   key={cat}
                   onClick={() => setSelectedFilter(cat)}
-                  className={`shrink-0 text-xs px-3.5 py-1.5 rounded-full border transition-all ${
-                    selectedFilter === cat
-                      ? `${meta.badgeClass} font-medium`
-                      : 'border-white/[0.06] text-gray-500 hover:text-gray-300 hover:border-white/10'
-                  }`}
+                  className={`shrink-0 text-xs px-3.5 py-1.5 rounded-full border transition-all ${selectedFilter === cat ? `${meta.badgeClass} font-medium` : 'border-white/[0.06] text-gray-500 hover:text-gray-300 hover:border-white/10'}`}
                 >
                   {meta.label} {count}
                 </button>
@@ -407,14 +417,7 @@ export default function PhotosPage() {
             <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 gap-3">
               <AnimatePresence mode="popLayout">
                 {filteredItems.map(item => (
-                  <motion.div
-                    key={item.id}
-                    layout
-                    initial={{ opacity: 0, scale: 0.93 }}
-                    animate={{ opacity: 1, scale: 1 }}
-                    exit={{ opacity: 0, scale: 0.9 }}
-                    transition={{ duration: 0.15 }}
-                  >
+                  <motion.div key={item.id} layout initial={{ opacity: 0, scale: 0.93 }} animate={{ opacity: 1, scale: 1 }} exit={{ opacity: 0, scale: 0.9 }} transition={{ duration: 0.15 }}>
                     <MediaCard item={item} onChange={updateItem} onRemove={removeItem} />
                   </motion.div>
                 ))}
@@ -422,16 +425,110 @@ export default function PhotosPage() {
             </div>
           ) : (
             <div className="glass-card rounded-2xl p-12 text-center">
-              <p className="text-gray-500 text-sm">
-                이 카테고리에 해당하는 사진이 없습니다.
-              </p>
+              <p className="text-gray-500 text-sm">이 카테고리에 해당하는 사진이 없습니다.</p>
+              <button onClick={() => setSelectedFilter('all')} className="mt-3 text-xs text-gray-600 hover:text-gray-400 transition-colors">전체 보기</button>
+            </div>
+          )}
+
+          {/* Go to distribute CTA */}
+          <div className="glass-card rounded-2xl p-4 flex items-center justify-between">
+            <div>
+              <p className="text-sm font-medium text-white">게시물 배분 준비 완료</p>
+              <p className="text-xs text-gray-500 mt-0.5">분류된 {imageCount}장을 게시물별로 자동 배분합니다</p>
+            </div>
+            <button
+              onClick={() => setPageView('distribute')}
+              className="btn-primary flex items-center gap-1.5 text-sm px-4 py-2"
+            >
+              게시물 배분 <ChevronRight size={14} />
+            </button>
+          </div>
+        </motion.div>
+      )}
+
+      {/* ── Distribution Panel ── */}
+      {hasResults && pageView === 'distribute' && (
+        <motion.div initial={{ opacity: 0, y: 12 }} animate={{ opacity: 1, y: 0 }} className="space-y-5">
+          {/* Back button */}
+          <button
+            onClick={() => setPageView('classify')}
+            className="flex items-center gap-1.5 text-xs text-gray-500 hover:text-gray-300 transition-colors"
+          >
+            <ChevronLeft size={14} /> 분류 결과로 돌아가기
+          </button>
+
+          {/* Settings card */}
+          <div className="glass-card rounded-2xl p-5">
+            <h2 className="text-sm font-semibold text-white mb-4">게시물 배분 설정</h2>
+            <div className="flex flex-col sm:flex-row sm:items-center gap-6">
+              {/* Post count input */}
+              <div className="flex items-center gap-3">
+                <span className="text-sm text-gray-400 whitespace-nowrap">게시물 수</span>
+                <div className="flex items-center gap-2">
+                  <button
+                    onClick={() => setPostCount(c => Math.max(minPostCount, c - 1))}
+                    className="w-8 h-8 rounded-lg bg-white/[0.06] border border-white/[0.08] flex items-center justify-center text-gray-300 hover:bg-white/10 transition-colors"
+                  >-</button>
+                  <span className="text-lg font-bold text-white w-8 text-center">{postCount}</span>
+                  <button
+                    onClick={() => setPostCount(c => Math.min(maxPostCount || 999, c + 1))}
+                    className="w-8 h-8 rounded-lg bg-white/[0.06] border border-white/[0.08] flex items-center justify-center text-gray-300 hover:bg-white/10 transition-colors"
+                  >+</button>
+                </div>
+                <span className="text-xs text-gray-600">개</span>
+              </div>
+
+              {/* Info */}
+              <div className="flex items-center gap-4 text-xs text-gray-500">
+                <span>총 <span className="text-white font-medium">{imageCount}</span>장</span>
+                <span>·</span>
+                <span>게시물당 약 <span className="text-white font-medium">{photosPerPost}</span>장</span>
+                {photosPerPost < MIN_PHOTOS_PER_POST && (
+                  <span className="text-yellow-400">⚠ 게시물당 {MIN_PHOTOS_PER_POST}장 미만</span>
+                )}
+                {photosPerPost > MAX_PHOTOS_PER_POST && (
+                  <span className="text-yellow-400">⚠ 게시물당 {MAX_PHOTOS_PER_POST}장 초과</span>
+                )}
+              </div>
+
               <button
-                onClick={() => setSelectedFilter('all')}
-                className="mt-3 text-xs text-gray-600 hover:text-gray-400 transition-colors"
+                onClick={handleDistribute}
+                className="btn-primary flex items-center gap-1.5 text-sm px-4 py-2 whitespace-nowrap"
               >
-                전체 보기
+                <Layers size={14} /> 배분 실행
               </button>
             </div>
+
+            {/* Range hint */}
+            {imageCount >= MIN_PHOTOS_PER_POST && (
+              <p className="text-xs text-gray-600 mt-3">
+                권장 범위: {minPostCount}~{maxPostCount || postCount}개 게시물
+                (게시물당 {MIN_PHOTOS_PER_POST}~{MAX_PHOTOS_PER_POST}장 기준)
+              </p>
+            )}
+          </div>
+
+          {/* Distribution result */}
+          {isDistributed && postDrafts.length > 0 && (
+            <motion.div initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} className="space-y-4">
+              <div className="flex items-center justify-between">
+                <p className="text-sm text-gray-400">
+                  <span className="text-white font-medium">{postDrafts.length}개 게시물</span>로 배분 완료
+                </p>
+                <button
+                  onClick={handleSaveDistribution}
+                  className="btn-primary flex items-center gap-1.5 text-xs px-3 py-1.5"
+                >
+                  <Save size={12} /> 배분 저장
+                </button>
+              </div>
+
+              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
+                {postDrafts.map(draft => (
+                  <PostPreviewCard key={draft.postIndex} draft={draft} />
+                ))}
+              </div>
+            </motion.div>
           )}
         </motion.div>
       )}
@@ -441,22 +538,30 @@ export default function PhotosPage() {
         <div className="glass-card rounded-2xl p-16 flex flex-col items-center justify-center text-center min-h-[280px]">
           <Loader2 size={32} className="text-primary animate-spin mb-4" />
           <p className="text-gray-300 font-medium mb-1">AI가 사진을 분석하고 있습니다</p>
-          <p className="text-gray-600 text-sm">
-            {uploadedFiles.length > 0 ? `${uploadedFiles.length}장` : ''} 잠시만 기다려 주세요...
-          </p>
+          {classifyProgress && (
+            <p className="text-gray-500 text-sm mb-3">
+              {classifyProgress.done} / {classifyProgress.total}장 완료
+            </p>
+          )}
+          {classifyProgress && (
+            <div className="w-48 h-1.5 bg-white/[0.06] rounded-full overflow-hidden">
+              <div
+                className="h-full bg-primary rounded-full transition-all"
+                style={{ width: `${(classifyProgress.done / classifyProgress.total) * 100}%` }}
+              />
+            </div>
+          )}
         </div>
       )}
 
       {/* Empty state */}
-      {showEmpty && (
+      {!isClassifying && !hasResults && uploadedFiles.length === 0 && (
         <div className="glass-card rounded-2xl p-16 flex flex-col items-center justify-center text-center min-h-[280px]">
           <div className="w-16 h-16 rounded-2xl bg-white/[0.04] flex items-center justify-center mb-4">
             <Image size={26} className="text-gray-700" />
           </div>
           <p className="text-gray-400 font-medium mb-1">분류 결과가 여기에 표시됩니다</p>
-          <p className="text-gray-600 text-sm">
-            사진을 업로드하고 AI 분류를 실행하면 카테고리별로 정리됩니다
-          </p>
+          <p className="text-gray-600 text-sm">사진을 업로드하고 AI 분류를 실행하면 카테고리별로 정리됩니다</p>
         </div>
       )}
     </div>
