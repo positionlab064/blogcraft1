@@ -14,6 +14,13 @@ import { requireAuth } from './middleware/auth.js';
 dotenv.config({ path: '.env.local' });
 dotenv.config(); // fallback to .env
 
+process.on('unhandledRejection', (reason) => {
+  console.error('[Server] Unhandled Rejection:', reason);
+});
+process.on('uncaughtException', (err) => {
+  console.error('[Server] Uncaught Exception:', err);
+});
+
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const PORT = parseInt(process.env.PORT ?? '3001', 10);
 const isDev = process.env.NODE_ENV !== 'production';
@@ -21,7 +28,23 @@ const isDev = process.env.NODE_ENV !== 'production';
 const app = express();
 
 // ── 미들웨어 ────────────────────────────────────────────────
-app.use(cors({ origin: '*' }));
+const allowedOrigins = isDev
+  ? ['http://localhost:3000', 'http://127.0.0.1:3000']
+  : process.env.APP_URL
+    ? process.env.APP_URL.split(',').map(s => s.trim())
+    : ['https://blogcraft1.pages.dev'];
+
+app.use(
+  cors({
+    origin: (origin, callback) => {
+      // origin이 없으면 (Postman, curl 등) 허용
+      if (!origin) return callback(null, true);
+      if (allowedOrigins.includes(origin)) return callback(null, true);
+      callback(new Error(`CORS blocked: ${origin}`));
+    },
+    credentials: true,
+  }),
+);
 
 app.use(express.json({ limit: '50mb' }));
 app.use(express.urlencoded({ extended: true, limit: '50mb' }));
