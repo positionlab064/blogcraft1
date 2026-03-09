@@ -14,6 +14,13 @@ import { requireAuth } from './middleware/auth.js';
 dotenv.config({ path: '.env.local' });
 dotenv.config(); // fallback to .env
 
+process.on('unhandledRejection', (reason) => {
+  console.error('[Server] Unhandled Rejection:', reason);
+});
+process.on('uncaughtException', (err) => {
+  console.error('[Server] Uncaught Exception:', err);
+});
+
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const PORT = parseInt(process.env.PORT ?? '3001', 10);
 const isDev = process.env.NODE_ENV !== 'production';
