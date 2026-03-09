@@ -128,6 +128,12 @@ router.post('/login', async (req: Request, res: Response) => {
   }
 });
 
+// POST /api/auth/logout  (protected)
+router.post('/logout', requireAuth, (_req: AuthRequest, res: Response) => {
+  // JWT는 stateless이므로 클라이언트가 토큰을 삭제하는 것으로 충분합니다
+  return res.json({ message: '로그아웃 되었습니다.' });
+});
+
 // GET /api/auth/me  (protected)
 router.get('/me', requireAuth, async (req: AuthRequest, res: Response) => {
   const db = getDb();

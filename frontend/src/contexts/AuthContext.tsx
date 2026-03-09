@@ -49,6 +49,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   };
 
   const logout = () => {
+    api.logout().catch(() => {}); // 서버에 로그아웃 알림 (실패해도 무관)
     localStorage.removeItem(TOKEN_KEY);
     setAuthToken(null);
     setUser(null);

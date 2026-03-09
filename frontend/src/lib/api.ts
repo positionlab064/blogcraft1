@@ -120,6 +120,8 @@ export const api = {
 
   me: () => req<User>('/auth/me'),
 
+  logout: () => req<{ message: string }>('/auth/logout', { method: 'POST' }),
+
   // 원고 생성
   generate: (data: GenerateReq) =>
     req<GenerateRes>('/generate', { method: 'POST', body: JSON.stringify(data) }),
