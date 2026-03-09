@@ -47,14 +47,16 @@ jobs:
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
         run: |
           set +e
+          WRANGLER="${{ github.workspace }}/node_modules/.bin/wrangler"
+
           # cd into temp dir so wrangler doesn't find wrangler.toml with D1 bindings
           mkdir /tmp/cf_deploy
           cp -r dist/. /tmp/cf_deploy/
           cd /tmp/cf_deploy
 
-          npx wrangler@3 pages project create blogcraft-ai --production-branch=main 2>&1 || true
+          $WRANGLER pages project create blogcraft-ai --production-branch=main 2>&1 || true
 
-          OUTPUT=$(npx wrangler@3 pages deploy . --project-name=blogcraft-ai 2>&1)
+          OUTPUT=$($WRANGLER pages deploy . --project-name=blogcraft-ai 2>&1)
           DEPLOY_EXIT=$?
 
           echo "$OUTPUT"
