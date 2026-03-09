@@ -1,4 +1,4 @@
-const BASE = (import.meta.env.VITE_API_URL ?? 'https://blogcraft1-production-af29.up.railway.app') + '/api';
+const BASE = (import.meta.env.VITE_API_URL ?? '') + '/api';
 
 // ── 인증 토큰 관리 ───────────────────────────────────────────
 let _token: string | null = null;
