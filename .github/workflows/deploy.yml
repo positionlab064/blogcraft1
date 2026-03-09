@@ -28,21 +28,30 @@ jobs:
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          WRANGLER_LOG: warn
         run: |
-          {
-            echo "### Wrangler version"
-            npx wrangler --version 2>&1
+          set +e
+          echo "## Deploy Log" >> $GITHUB_STEP_SUMMARY
 
-            echo "### Create project (ignore if exists)"
-            npx wrangler pages project create blogcraft-ai --production-branch=main 2>&1 || true
+          # wrangler version
+          WRANGLER_VER=$(npx wrangler@3 --version 2>&1)
+          echo "wrangler: $WRANGLER_VER" | tee -a $GITHUB_STEP_SUMMARY
 
-            echo "### Deploy"
-            mv wrangler.toml wrangler.toml.bak
-            npx wrangler pages deploy dist --project-name=blogcraft-ai --commit-dirty=true 2>&1
-            DEPLOY_EXIT=$?
-            mv wrangler.toml.bak wrangler.toml
+          # create project if not exists
+          echo "--- create project ---" >> $GITHUB_STEP_SUMMARY
+          npx wrangler@3 pages project create blogcraft-ai --production-branch=main >> $GITHUB_STEP_SUMMARY 2>&1 || true
 
-            echo "### Exit code: $DEPLOY_EXIT"
-            exit $DEPLOY_EXIT
-          } | tee -a $GITHUB_STEP_SUMMARY
-          exit ${PIPESTATUS[0]}
+          # hide wrangler.toml to avoid D1 binding conflicts
+          mv wrangler.toml wrangler.toml.bak
+
+          # deploy
+          echo "--- deploy ---" >> $GITHUB_STEP_SUMMARY
+          DEPLOY_OUT=$(npx wrangler@3 pages deploy dist --project-name=blogcraft-ai 2>&1)
+          DEPLOY_EXIT=$?
+          echo "$DEPLOY_OUT" | tee -a $GITHUB_STEP_SUMMARY
+
+          # restore
+          mv wrangler.toml.bak wrangler.toml
+
+          echo "--- exit code: $DEPLOY_EXIT ---" >> $GITHUB_STEP_SUMMARY
+          exit $DEPLOY_EXIT
