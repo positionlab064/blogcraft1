@@ -82,15 +82,14 @@ app.use((err: Error, _req: express.Request, res: express.Response, _next: expres
 });
 
 // ── 시작 ───────────────────────────────────────────────────
-initDb().catch(err => {
-  console.error('[DB] Failed to initialize database:', err);
-  process.exit(1);
-});
-
 app.listen(PORT, '0.0.0.0', () => {
   console.log(`\n🚀 BlogCraft AI 서버 실행 중`);
   console.log(`   API:  http://localhost:${PORT}/api`);
   console.log(`   환경: ${isDev ? 'development' : 'production'}\n`);
+
+  initDb()
+    .then(() => console.log('[DB] 데이터베이스 초기화 완료'))
+    .catch(err => console.error('[DB] 데이터베이스 초기화 실패 (서버는 계속 실행):', err));
 });
 
 export default app;
