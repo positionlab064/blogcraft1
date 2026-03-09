@@ -7,7 +7,7 @@ import { CATEGORY_META, ALL_IMAGE_CATEGORIES } from '../../lib/media/categoryMet
 import type { MediaCategory } from '../../lib/media/categoryMeta';
 import MediaCard from '../../components/photos/MediaCard';
 
-const MAX_FILES = 20;
+const MAX_FILES = Infinity;
 const ACCEPTED_MIME = ['image/jpeg', 'image/png', 'image/webp'];
 
 type FilterTab = 'all' | MediaCategory;
@@ -45,12 +45,7 @@ export default function PhotosPage() {
         );
       }
 
-      const remaining = MAX_FILES - uploadedFiles.length;
-      if (valid.length > remaining) {
-        setErrorMessage(`최대 ${MAX_FILES}장까지 업로드할 수 있습니다. ${remaining}장만 추가됩니다.`);
-      }
-
-      const toAdd = valid.slice(0, remaining);
+      const toAdd = valid;
       if (toAdd.length === 0) return;
 
       setUploadedFiles(prev => [
@@ -205,7 +200,7 @@ export default function PhotosPage() {
               <p className="text-white font-medium mb-1">
                 {isDragging ? '여기에 놓으세요!' : '사진을 끌어다 놓거나 클릭하여 선택'}
               </p>
-              <p className="text-gray-600 text-sm">JPG, PNG, WebP · 최대 {MAX_FILES}장</p>
+              <p className="text-gray-600 text-sm">JPG, PNG, WebP</p>
             </div>
           </div>
 
@@ -215,9 +210,6 @@ export default function PhotosPage() {
               <div className="flex items-center justify-between mb-4">
                 <span className="text-sm font-medium text-gray-300">
                   {uploadedFiles.length}장 선택됨
-                  {uploadedFiles.length >= MAX_FILES && (
-                    <span className="ml-2 text-xs text-yellow-500">(최대)</span>
-                  )}
                 </span>
                 <button
                   onClick={clearAll}

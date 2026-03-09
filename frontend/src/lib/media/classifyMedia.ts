@@ -1,3 +1,4 @@
+import { GoogleGenAI } from '@google/genai';
 import { CATEGORY_META } from './categoryMeta';
 import type { MediaCategory } from './categoryMeta';
 
@@ -29,105 +30,126 @@ export interface SavePayload {
   }[];
 }
 
-// ─── Mock Classifier ────────────────────────────────────────────────────────
-//
-// TODO: Replace mockClassifySingle() with a real Vision API call.
-//
-// Example (OpenAI Vision):
-//   const res = await openai.chat.completions.create({
-//     model: 'gpt-4o',
-//     messages: [{
-//       role: 'user',
-//       content: [
-//         { type: 'text', text: CLASSIFICATION_PROMPT },
-//         { type: 'image_url', image_url: { url: `data:image/jpeg;base64,${base64}` } },
-//       ],
-//     }],
-//   });
-//   return parseAIResponse(res.choices[0].message.content);
-//
-// ───────────────────────────────────────────────────────────────────────────
+// ─── Gemini Vision Classifier ───────────────────────────────────────────────
 
-const KEYWORD_RULES: { keywords: string[]; category: MediaCategory; confidence: number }[] = [
-  { keywords: ['exterior', 'outside', 'outer', '외관', '간판', 'front'], category: 'exterior', confidence: 0.88 },
-  { keywords: ['interior', 'inside', '내부', '홀', 'hall', 'room'], category: 'interior', confidence: 0.85 },
-  { keywords: ['menu', '메뉴', 'board', 'price'], category: 'menu_board', confidence: 0.82 },
-  { keywords: ['main', 'signature', '대표', 'special', 'feature'], category: 'signature_menu', confidence: 0.84 },
-  { keywords: ['table', 'set', '상차림', 'full', 'spread', 'course'], category: 'full_table', confidence: 0.80 },
-  { keywords: ['detail', 'close', 'closeup', '클로즈', 'macro'], category: 'food_detail', confidence: 0.83 },
-  { keywords: ['cook', 'plate', 'plating', '조리', 'grill', 'serve'], category: 'cooking_process', confidence: 0.81 },
-  { keywords: ['side', '사이드', 'extra', 'add'], category: 'side_menu', confidence: 0.79 },
-  { keywords: ['drink', 'beverage', '음료', '주류', 'juice', 'beer', 'coffee', 'cafe'], category: 'beverage', confidence: 0.86 },
-  { keywords: ['service', 'bar', '셀프', 'self', 'station', 'refill'], category: 'service_point', confidence: 0.78 },
-  { keywords: ['closing', 'final', 'last', '마무리', 'end', 'outro'], category: 'closing_cut', confidence: 0.77 },
-  { keywords: ['person', 'people', '인물', 'staff', 'chef', 'owner', 'other'], category: 'person_or_other', confidence: 0.75 },
-];
+const GEMINI_API_KEY = import.meta.env.VITE_GEMINI_API_KEY as string;
 
-const FALLBACK_ROTATION: MediaCategory[] = [
-  'signature_menu',
-  'food_detail',
-  'exterior',
-  'interior',
-  'full_table',
-  'beverage',
-  'side_menu',
-  'cooking_process',
-];
+const CATEGORY_LIST = `
+exterior(외관/간판/건물), interior(매장내부/홀/좌석/인테리어),
+menu_board(메뉴판/가격표), signature_menu(대표메뉴/시그니처 음식),
+full_table(상차림/음식전체/세트구성), food_detail(음식 클로즈업/디테일샷),
+cooking_process(조리과정/플레이팅/서빙), side_menu(사이드메뉴/추가메뉴),
+beverage(음료/주류/커피/칵테일/디저트), service_point(셀프바/편의시설),
+closing_cut(마무리컷), person_or_other(인물/기타)
+`;
 
-function mockClassifySingle(
-  file: File,
-  index: number,
-): { category: MediaCategory; confidence: number } {
-  const name = file.name.toLowerCase().replace(/[-_.]/g, ' ');
+const PROMPT = `당신은 음식점 SNS 마케팅 전문가입니다. 아래 이미지를 보고 카테고리를 분류해주세요.
 
-  for (const rule of KEYWORD_RULES) {
-    if (rule.keywords.some(kw => name.includes(kw))) {
-      return { category: rule.category, confidence: rule.confidence };
-    }
-  }
+카테고리 목록:
+${CATEGORY_LIST}
 
-  // Fallback: cycle through realistic categories
-  const category = FALLBACK_ROTATION[index % FALLBACK_ROTATION.length];
-  const confidence = Math.round((0.62 + Math.random() * 0.22) * 100) / 100;
-  return { category, confidence };
-}
+반드시 아래 JSON 형식으로만 응답하세요. 설명 없이 JSON만:
+{"category": "카테고리_영문키", "confidence": 0.00~1.00 사이 숫자, "tags": ["태그1", "태그2", "태그3"]}`;
 
-// ─── Main Service Entry Point ───────────────────────────────────────────────
-//
-// To connect a real AI API: replace the body of this function.
-// The interface (input: File[], output: ClassifiedMediaItem[]) stays the same.
-//
-export async function classifyMedia(files: File[]): Promise<ClassifiedMediaItem[]> {
-  // Simulate async processing latency
-  await new Promise(r => setTimeout(r, 600 + files.length * 70));
-
-  return files.map((file, index) => {
-    const isVideo = file.type.startsWith('video/');
-    const { category, confidence } = isVideo
-      ? { category: 'highlight_video' as MediaCategory, confidence: 1.0 }
-      : mockClassifySingle(file, index);
-
-    return {
-      id: `media-${Date.now()}-${index}-${Math.random().toString(36).slice(2, 6)}`,
-      file,
-      previewUrl: URL.createObjectURL(file),
-      fileName: file.name,
-      fileType: isVideo ? 'video' : 'image',
-      predictedCategory: category,
-      confirmedCategory: category,
-      confidence,
-      tags: [...(CATEGORY_META[category]?.defaultTags ?? [])],
-      isRepresentative: false,
-      memo: '',
+async function fileToBase64(file: File): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => {
+      const result = reader.result as string;
+      resolve(result.split(',')[1]);
     };
+    reader.onerror = reject;
+    reader.readAsDataURL(file);
   });
 }
 
+const VALID_CATEGORIES = new Set<string>([
+  'exterior', 'interior', 'menu_board', 'signature_menu', 'full_table',
+  'food_detail', 'cooking_process', 'side_menu', 'beverage',
+  'service_point', 'closing_cut', 'person_or_other',
+]);
+
+async function classifyWithGemini(
+  file: File,
+): Promise<{ category: MediaCategory; confidence: number; tags: string[] }> {
+  const ai = new GoogleGenAI({ apiKey: GEMINI_API_KEY });
+  const base64 = await fileToBase64(file);
+
+  const response = await ai.models.generateContent({
+    model: 'gemini-2.0-flash',
+    contents: [
+      {
+        parts: [
+          { text: PROMPT },
+          { inlineData: { mimeType: file.type as 'image/jpeg' | 'image/png' | 'image/webp', data: base64 } },
+        ],
+      },
+    ],
+  });
+
+  const text = response.text?.().trim() ?? '';
+  const jsonMatch = text.match(/\{[\s\S]*\}/);
+  if (!jsonMatch) throw new Error('Invalid Gemini response');
+
+  const parsed = JSON.parse(jsonMatch[0]);
+  const category = VALID_CATEGORIES.has(parsed.category)
+    ? (parsed.category as MediaCategory)
+    : 'person_or_other';
+  const confidence = Math.min(1, Math.max(0, Number(parsed.confidence) || 0.7));
+  const tags: string[] = Array.isArray(parsed.tags)
+    ? parsed.tags.slice(0, 5)
+    : [...(CATEGORY_META[category]?.defaultTags ?? [])];
+
+  return { category, confidence, tags };
+}
+
+// ─── Main Service Entry Point ───────────────────────────────────────────────
+
+export async function classifyMedia(files: File[]): Promise<ClassifiedMediaItem[]> {
+  const results = await Promise.all(
+    files.map(async (file, index) => {
+      const isVideo = file.type.startsWith('video/');
+
+      let category: MediaCategory = 'person_or_other';
+      let confidence = 0.7;
+      let tags: string[] = [];
+
+      if (isVideo) {
+        category = 'highlight_video';
+        confidence = 1.0;
+        tags = ['영상'];
+      } else {
+        try {
+          const result = await classifyWithGemini(file);
+          category = result.category;
+          confidence = result.confidence;
+          tags = result.tags;
+        } catch {
+          tags = [...(CATEGORY_META[category]?.defaultTags ?? [])];
+        }
+      }
+
+      return {
+        id: `media-${Date.now()}-${index}-${Math.random().toString(36).slice(2, 6)}`,
+        file,
+        previewUrl: URL.createObjectURL(file),
+        fileName: file.name,
+        fileType: (isVideo ? 'video' : 'image') as 'image' | 'video',
+        predictedCategory: category,
+        confirmedCategory: category,
+        confidence,
+        tags,
+        isRepresentative: false,
+        memo: '',
+      };
+    }),
+  );
+
+  return results;
+}
+
 // ─── Save Payload Builder ───────────────────────────────────────────────────
-//
-// TODO: Pass payload to real API endpoint when backend is ready.
-// Example: await api.saveMediaClassification(payload)
-//
+
 export function buildSavePayload(storeId: string, items: ClassifiedMediaItem[]): SavePayload {
   return {
     storeId,
