@@ -2,11 +2,8 @@ name: Deploy
 
 on:
   push:
-    branches: [main, 'claude/**']
+    branches: [main]
   workflow_dispatch:
-
-permissions:
-  contents: write
 
 jobs:
   # ── Frontend → Cloudflare Pages ─────────────────────────────────────────
@@ -31,42 +28,8 @@ jobs:
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          set +e
           WRANGLER="${{ github.workspace }}/node_modules/.bin/wrangler"
-          LOG_FILE="/tmp/deploy_error.log"
-
-          echo "=== Token verify ===" >> $LOG_FILE
-          curl -s "https://api.cloudflare.com/client/v4/user/tokens/verify" \
-            -H "Authorization: Bearer $CLOUDFLARE_API_TOKEN" >> $LOG_FILE
-
-          echo "" >> $LOG_FILE
-          echo "=== CF Pages Projects (raw) ===" >> $LOG_FILE
-          curl -s "https://api.cloudflare.com/client/v4/accounts/$CLOUDFLARE_ACCOUNT_ID/pages/projects" \
-            -H "Authorization: Bearer $CLOUDFLARE_API_TOKEN" >> $LOG_FILE
-
-          echo "=== Create project ===" >> $LOG_FILE
-          $WRANGLER pages project create blogcraft-ai --production-branch=main 2>&1 >> $LOG_FILE || true
-
-          echo "=== Deploy ===" >> $LOG_FILE
           mkdir /tmp/cf_deploy && cp -r dist/. /tmp/cf_deploy/ && cd /tmp/cf_deploy
-          $WRANGLER pages deploy . --project-name=blogcraft-ai --branch=main --commit-dirty=true 2>&1 >> $LOG_FILE
-          DEPLOY_EXIT=$?
-
-          cat $LOG_FILE
-
-          if [ $DEPLOY_EXIT -ne 0 ]; then
-            # Push error log to ci-debug-log branch so it can be read without auth
-            cd "${{ github.workspace }}"
-            git config user.email "ci@github.com"
-            git config user.name "CI Debug"
-            git checkout --orphan ci-debug-log 2>/dev/null || git checkout ci-debug-log 2>/dev/null
-            git rm -rf . --quiet 2>/dev/null || true
-            cp $LOG_FILE deploy_error.log
-            git add deploy_error.log
-            git commit -m "ci: deploy error log $(date -u +%Y%m%dT%H%M%S)"
-            git push "https://x-access-token:$GH_TOKEN@github.com/${{ github.repository }}.git" HEAD:ci-debug-log --force
-          fi
-
-          exit $DEPLOY_EXIT
+          $WRANGLER pages project create blogcraft-ai --production-branch=main 2>&1 || true
+          $WRANGLER pages deploy . --project-name=blogcraft-ai --branch=main --commit-dirty=true
