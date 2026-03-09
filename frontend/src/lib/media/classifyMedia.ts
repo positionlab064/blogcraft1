@@ -183,7 +183,26 @@ export async function classifyMedia(
 
 // ─── Post Distribution ──────────────────────────────────────────────────────
 
-/** Distributes classified items evenly across N posts, mixing categories proportionally */
+/**
+ * 블로그 게시물 섹션 구조 및 사진 수 범위.
+ * categories 배열 앞쪽 카테고리 사진을 우선 사용.
+ */
+const BLOG_SECTIONS = [
+  { key: 'exterior',       categories: ['exterior'] as MediaCategory[],                       min: 2, max: 4  },
+  { key: 'interior',       categories: ['interior', 'service_point'] as MediaCategory[],      min: 4, max: 8  },
+  { key: 'menu_board',     categories: ['menu_board'] as MediaCategory[],                     min: 1, max: 2  },
+  { key: 'signature_menu', categories: ['signature_menu', 'full_table'] as MediaCategory[],   min: 6, max: 12 },
+  { key: 'food_detail',    categories: ['food_detail', 'cooking_process'] as MediaCategory[], min: 5, max: 10 },
+  { key: 'side_menu',      categories: ['side_menu', 'beverage'] as MediaCategory[],          min: 2, max: 5  },
+  { key: 'closing_cut',    categories: ['closing_cut'] as MediaCategory[],                    min: 1, max: 2  },
+];
+
+/**
+ * 전체 사진을 N개 게시물에 섹션 비율 기반으로 배분.
+ * - 게시물당 사진 수 = 전체 / N
+ * - 각 섹션 목표 = 게시물당 사진 수 × (섹션 midpoint / 전체 midpoint 합), min~max 클램프
+ * - 각 섹션 풀에서 포스트별로 순서대로 목표만큼 채운다
+ */
 export function distributeIntoPosts(
   items: ClassifiedMediaItem[],
   postCount: number,
@@ -193,24 +212,42 @@ export function distributeIntoPosts(
   const imageItems = items.filter(i => i.fileType === 'image');
   const videoItems = items.filter(i => i.fileType === 'video');
 
+  // 게시물당 목표 사진 수 및 섹션별 목표량 계산
+  const photosPerPost = Math.round(imageItems.length / postCount);
+  const totalMidpoints = BLOG_SECTIONS.reduce((sum, s) => sum + (s.min + s.max) / 2, 0);
+  const targetsPerPost = BLOG_SECTIONS.map(s => {
+    const mid = (s.min + s.max) / 2;
+    return Math.max(s.min, Math.min(s.max, Math.round(photosPerPost * (mid / totalMidpoints))));
+  });
+
+  // 섹션별 사진 풀 (중복 없이)
+  const assigned = new Set<string>();
+  const sectionPools = BLOG_SECTIONS.map(section =>
+    section.categories.flatMap(cat => imageItems.filter(item => item.confirmedCategory === cat)),
+  );
+
+  // 포스트 배열 초기화
   const posts: ClassifiedMediaItem[][] = Array.from({ length: postCount }, () => []);
 
-  // Group images by confirmed category
-  const byCategory = new Map<MediaCategory, ClassifiedMediaItem[]>();
-  for (const item of imageItems) {
-    const cat = item.confirmedCategory;
-    if (!byCategory.has(cat)) byCategory.set(cat, []);
-    byCategory.get(cat)!.push(item);
-  }
+  // 섹션별로 각 포스트에 목표량만큼 배분 (포스트 순서대로 슬라이싱)
+  BLOG_SECTIONS.forEach((_, sIdx) => {
+    const pool = sectionPools[sIdx].filter(item => !assigned.has(item.id));
+    const target = targetsPerPost[sIdx];
+    for (let p = 0; p < postCount; p++) {
+      const slice = pool.slice(p * target, p * target + target);
+      for (const item of slice) {
+        posts[p].push(item);
+        assigned.add(item.id);
+      }
+    }
+  });
 
-  // Round-robin from each category so every post gets a variety
-  for (const catItems of byCategory.values()) {
-    catItems.forEach((item, idx) => {
-      posts[idx % postCount].push(item);
-    });
-  }
+  // 미배분 사진(person_or_other 등)은 라운드로빈으로 추가
+  imageItems
+    .filter(item => !assigned.has(item.id))
+    .forEach((item, idx) => posts[idx % postCount].push(item));
 
-  // Add videos to first post
+  // 영상은 첫 포스트에
   videoItems.forEach(v => posts[0]?.push(v));
 
   return posts
