@@ -24,20 +24,13 @@ jobs:
       - name: Build
         run: npm run build
 
-      - name: Check Cloudflare auth
+      - name: Deploy to Cloudflare Pages
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          WRANGLER_LOG: debug
         run: |
-          npx wrangler whoami 2>&1 || true
-          echo "Account ID: ${CLOUDFLARE_ACCOUNT_ID:0:8}..."
+          echo "=== Projects ==="
           npx wrangler pages project list 2>&1 || true
-
-      - name: Deploy to Cloudflare Pages
-        uses: cloudflare/pages-action@v1
-        with:
-          apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
-          accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
-          projectName: blogcraft-ai
-          directory: dist
-          gitHubToken: ${{ secrets.GITHUB_TOKEN }}
+          echo "=== Deploy ==="
+          npx wrangler pages deploy dist --project-name=blogcraft-ai --commit-dirty=true 2>&1
