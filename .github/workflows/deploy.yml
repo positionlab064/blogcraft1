@@ -24,34 +24,32 @@ jobs:
       - name: Build
         run: npm run build
 
+      - name: Check dist
+        run: ls -la dist/ && echo "Files count:" && find dist -type f | wc -l
+
       - name: Deploy to Cloudflare Pages
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
-          WRANGLER_LOG: warn
         run: |
           set +e
           echo "## Deploy Log" >> $GITHUB_STEP_SUMMARY
 
-          # wrangler version
-          WRANGLER_VER=$(npx wrangler@3 --version 2>&1)
-          echo "wrangler: $WRANGLER_VER" | tee -a $GITHUB_STEP_SUMMARY
+          # Check project exists via CF API
+          echo "### CF Projects:" >> $GITHUB_STEP_SUMMARY
+          curl -s "https://api.cloudflare.com/client/v4/accounts/$CLOUDFLARE_ACCOUNT_ID/pages/projects" \
+            -H "Authorization: Bearer $CLOUDFLARE_API_TOKEN" \
+            | python3 -c "import json,sys; d=json.load(sys.stdin); [print(p['name']) for p in d.get('result',[])]" >> $GITHUB_STEP_SUMMARY 2>&1
 
-          # create project if not exists
-          echo "--- create project ---" >> $GITHUB_STEP_SUMMARY
+          # create if not exists
           npx wrangler@3 pages project create blogcraft-ai --production-branch=main >> $GITHUB_STEP_SUMMARY 2>&1 || true
 
-          # hide wrangler.toml to avoid D1 binding conflicts
-          mv wrangler.toml wrangler.toml.bak
+          # deploy from a clean temp dir (no wrangler.toml)
+          mkdir /tmp/cf_deploy
+          cp -r dist/. /tmp/cf_deploy/
+          echo "### Deploy output:" >> $GITHUB_STEP_SUMMARY
+          npx wrangler@3 pages deploy /tmp/cf_deploy --project-name=blogcraft-ai 2>&1 | tee -a $GITHUB_STEP_SUMMARY
+          DEPLOY_EXIT=${PIPESTATUS[0]}
 
-          # deploy
-          echo "--- deploy ---" >> $GITHUB_STEP_SUMMARY
-          DEPLOY_OUT=$(npx wrangler@3 pages deploy dist --project-name=blogcraft-ai 2>&1)
-          DEPLOY_EXIT=$?
-          echo "$DEPLOY_OUT" | tee -a $GITHUB_STEP_SUMMARY
-
-          # restore
-          mv wrangler.toml.bak wrangler.toml
-
-          echo "--- exit code: $DEPLOY_EXIT ---" >> $GITHUB_STEP_SUMMARY
+          echo "### Exit: $DEPLOY_EXIT" >> $GITHUB_STEP_SUMMARY
           exit $DEPLOY_EXIT
