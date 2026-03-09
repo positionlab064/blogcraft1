@@ -3,6 +3,9 @@ compatibility_date = "2024-09-23"
 compatibility_flags = ["nodejs_compat"]
 pages_build_output_dir = "dist"
 
+[vars]
+VITE_API_URL = "https://blogcraft1-production-af29.up.railway.app"
+
 [[d1_databases]]
 binding = "DB"
 database_name = "blogcraft-ai-db"

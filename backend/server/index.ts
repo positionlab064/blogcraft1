@@ -1,8 +1,6 @@
 import express from 'express';
 import cors from 'cors';
 import dotenv from 'dotenv';
-import path from 'path';
-import { fileURLToPath } from 'url';
 
 import { initDb } from './db.js';
 import authRouter from './routes/auth.js';
@@ -21,7 +19,6 @@ process.on('uncaughtException', (err) => {
   console.error('[Server] Uncaught Exception:', err);
 });
 
-const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const PORT = parseInt(process.env.PORT ?? '3001', 10);
 const isDev = process.env.NODE_ENV !== 'production';
 
@@ -40,7 +37,8 @@ app.use(
       // origin이 없으면 (Postman, curl 등) 허용
       if (!origin) return callback(null, true);
       if (allowedOrigins.includes(origin)) return callback(null, true);
-      callback(new Error(`CORS blocked: ${origin}`));
+      // 에러 대신 false 반환 → 5xx 없이 CORS 헤더만 미설정
+      callback(null, false);
     },
     credentials: true,
   }),
@@ -66,15 +64,6 @@ app.get('/api/health', (_req, res) => {
   res.json({ status: 'ok', timestamp: new Date().toISOString() });
 });
 
-// ── 프로덕션: 정적 파일 서빙 ──────────────────────────────
-if (!isDev) {
-  const distPath = path.join(__dirname, '..', '..', 'dist');
-  app.use(express.static(distPath));
-  app.get('*', (_req, res) => {
-    res.sendFile(path.join(distPath, 'index.html'));
-  });
-}
-
 // ── 에러 핸들러 ────────────────────────────────────────────
 app.use((err: Error, _req: express.Request, res: express.Response, _next: express.NextFunction) => {
   console.error('[Server Error]', err.stack);
@@ -82,15 +71,14 @@ app.use((err: Error, _req: express.Request, res: express.Response, _next: expres
 });
 
 // ── 시작 ───────────────────────────────────────────────────
-initDb().catch(err => {
-  console.error('[DB] Failed to initialize database:', err);
-  process.exit(1);
-});
-
 app.listen(PORT, '0.0.0.0', () => {
   console.log(`\n🚀 BlogCraft AI 서버 실행 중`);
   console.log(`   API:  http://localhost:${PORT}/api`);
   console.log(`   환경: ${isDev ? 'development' : 'production'}\n`);
+
+  initDb()
+    .then(() => console.log('[DB] 데이터베이스 초기화 완료'))
+    .catch(err => console.error('[DB] 데이터베이스 초기화 실패 (서버는 계속 실행):', err));
 });
 
 export default app;
