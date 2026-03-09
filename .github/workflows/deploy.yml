@@ -29,5 +29,11 @@ jobs:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
         run: |
+          # Create minimal pages-only config (avoids wrangler.toml D1 binding conflicts)
+          cat > wrangler.pages.toml << 'EOF'
+          name = "blogcraft-ai"
+          compatibility_date = "2024-09-23"
+          pages_build_output_dir = "dist"
+          EOF
           npx wrangler pages project create blogcraft-ai --production-branch=main 2>&1 || true
-          npx wrangler pages deploy dist --project-name=blogcraft-ai --commit-dirty=true
+          npx wrangler pages deploy dist --project-name=blogcraft-ai --config wrangler.pages.toml --commit-dirty=true
