@@ -37,20 +37,13 @@ jobs:
           WRANGLER="${{ github.workspace }}/node_modules/.bin/wrangler"
           LOG_FILE="/tmp/deploy_error.log"
 
-          echo "=== CF Account check ===" >> $LOG_FILE
-          CF_RESP=$(curl -s "https://api.cloudflare.com/client/v4/accounts/$CLOUDFLARE_ACCOUNT_ID/pages/projects" \
-            -H "Authorization: Bearer $CLOUDFLARE_API_TOKEN")
-          echo "$CF_RESP" | python3 -c "
-import json,sys
-d=json.load(sys.stdin)
-print('success:', d.get('success'))
-print('errors:', d.get('errors'))
-print('messages:', d.get('messages'))
-[print('project:', p['name']) for p in d.get('result',[])]
-" 2>&1 >> $LOG_FILE
-
           echo "=== Token verify ===" >> $LOG_FILE
           curl -s "https://api.cloudflare.com/client/v4/user/tokens/verify" \
+            -H "Authorization: Bearer $CLOUDFLARE_API_TOKEN" >> $LOG_FILE
+
+          echo "" >> $LOG_FILE
+          echo "=== CF Pages Projects (raw) ===" >> $LOG_FILE
+          curl -s "https://api.cloudflare.com/client/v4/accounts/$CLOUDFLARE_ACCOUNT_ID/pages/projects" \
             -H "Authorization: Bearer $CLOUDFLARE_API_TOKEN" >> $LOG_FILE
 
           echo "=== Create project ===" >> $LOG_FILE
