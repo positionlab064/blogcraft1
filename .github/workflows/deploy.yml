@@ -28,9 +28,20 @@ jobs:
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
-          WRANGLER_LOG: debug
         run: |
-          echo "=== Projects ==="
-          npx wrangler pages project list 2>&1 || true
-          echo "=== Deploy ==="
-          npx wrangler pages deploy dist --project-name=blogcraft-ai --commit-dirty=true 2>&1
+          echo "## Cloudflare Deploy Log" >> $GITHUB_STEP_SUMMARY
+          echo '```' >> $GITHUB_STEP_SUMMARY
+
+          echo "=== whoami ===" | tee -a $GITHUB_STEP_SUMMARY
+          npx wrangler whoami 2>&1 | tee -a $GITHUB_STEP_SUMMARY || true
+
+          echo "=== project list ===" | tee -a $GITHUB_STEP_SUMMARY
+          npx wrangler pages project list 2>&1 | tee -a $GITHUB_STEP_SUMMARY || true
+
+          echo "=== create project (ignore if exists) ===" | tee -a $GITHUB_STEP_SUMMARY
+          npx wrangler pages project create blogcraft-ai --production-branch=main 2>&1 | tee -a $GITHUB_STEP_SUMMARY || true
+
+          echo "=== deploy ===" | tee -a $GITHUB_STEP_SUMMARY
+          npx wrangler pages deploy dist --project-name=blogcraft-ai --commit-dirty=true 2>&1 | tee -a $GITHUB_STEP_SUMMARY
+
+          echo '```' >> $GITHUB_STEP_SUMMARY
