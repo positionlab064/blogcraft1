@@ -88,8 +88,9 @@ async function classifyWithGemini(
   });
 
   const text = (response.text ?? '').trim();
+  console.log('[Gemini] raw response:', text);
   const jsonMatch = text.match(/\{[\s\S]*?\}/);
-  if (!jsonMatch) throw new Error('Invalid Gemini response');
+  if (!jsonMatch) throw new Error(`Invalid Gemini response: ${text.slice(0, 200)}`);
 
   const parsed = JSON.parse(jsonMatch[0]);
   const category = VALID_CATEGORIES.has(parsed.category)
@@ -144,7 +145,8 @@ export async function classifyMedia(
               confidence = result.confidence;
               tags = result.tags;
               break;
-            } catch {
+            } catch (err) {
+              console.error(`[classifyMedia] attempt ${attempt + 1} failed for ${file.name}:`, err);
               if (attempt === 0) await sleep(1200);
             }
           }
