@@ -87,7 +87,7 @@ async function classifyWithGemini(
     ],
   });
 
-  const text = response.text?.().trim() ?? '';
+  const text = (response.text ?? '').trim();
   const jsonMatch = text.match(/\{[\s\S]*?\}/);
   if (!jsonMatch) throw new Error('Invalid Gemini response');
 
