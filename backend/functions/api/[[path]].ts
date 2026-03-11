@@ -354,7 +354,9 @@ app.post('/api/keyword/analyze', requireAuth, async (c) => {
 });
 
 // ── Photos Routes ─────────────────────────────────────────────
-const CATEGORIES = ['음식', '풍경', '인물', '동물', '건물/인테리어', '제품', '텍스트/문서', '기타'] as const;
+const PHOTO_CATEGORIES = ['exterior', 'interior', 'menu_board', 'signature_menu', 'full_table', 'food_detail', 'cooking_process', 'side_menu', 'beverage', 'service_point', 'closing_cut', 'person_or_other'] as const;
+const PHOTO_CATEGORY_DESC = `exterior(외관/간판/건물), interior(매장내부/홀/좌석/인테리어), menu_board(메뉴판/가격표), signature_menu(대표메뉴/시그니처 음식), full_table(상차림/음식전체/세트구성), food_detail(음식 클로즈업/디테일샷), cooking_process(조리과정/플레이팅/서빙), side_menu(사이드메뉴/추가메뉴), beverage(음료/주류/커피/칵테일/디저트), service_point(셀프바/편의시설), closing_cut(마무리컷), person_or_other(인물/기타)`;
+const PHOTO_PROMPT = `당신은 음식점 SNS 마케팅 전문가입니다. 이미지를 분석하여 가장 적합한 카테고리를 선택하세요.\n\n카테고리(반드시 아래 영문 키 중 하나만 사용):\n${PHOTO_CATEGORY_DESC}\n\n응답 형식(JSON만, 설명 없이):\n{"category":"카테고리_키","confidence":0.0~1.0,"tags":["태그1","태그2","태그3"],"description":"한 줄 설명"}\n\n중요: 음식/메뉴 사진은 최대한 구체적 카테고리(signature_menu, food_detail, full_table 등)로 분류하세요. person_or_other는 사람이 메인이거나 분류불가일 때만 사용하세요.`;
 
 app.post('/api/photos/classify', requireAuth, async (c) => {
   const { images } = await c.req.json<any>();
@@ -370,21 +372,21 @@ app.post('/api/photos/classify', requireAuth, async (c) => {
 
   for (const photo of images) {
     try {
-      const base64Data = photo.base64.replace(/^data:image\/[a-z]+;base64,/, '');
-      const mimeType = photo.mimeType ?? (photo.base64.startsWith('data:image/png') ? 'image/png' : 'image/jpeg');
-      const prompt = `이 이미지를 분석하여 아래 카테고리 중 하나로 분류하세요.\n\n카테고리 목록:\n${CATEGORIES.map((c, i) => `${i + 1}. ${c}`).join('\n')}\n\n반드시 다음 JSON 형식으로만 응답하세요 (다른 텍스트 없이):\n{"category": "카테고리명", "confidence": 0.9, "description": "한 줄 설명"}`;
-      const response = await ai.models.generateContent({ model: 'gemini-2.0-flash', contents: [{ role: 'user', parts: [{ inlineData: { mimeType, data: base64Data } }, { text: prompt }] }], config: { temperature: 0.1, maxOutputTokens: 200, responseMimeType: 'application/json' } });
+      const base64Data = photo.base64.replace(/^data:image\/[a-z+]+;base64,/, '');
+      const mimeType = photo.mimeType ?? 'image/jpeg';
+      const response = await ai.models.generateContent({ model: 'gemini-2.0-flash', contents: [{ role: 'user', parts: [{ inlineData: { mimeType, data: base64Data } }, { text: PHOTO_PROMPT }] }], config: { temperature: 0.1, maxOutputTokens: 300, responseMimeType: 'application/json' } });
       const rawText = response.text ?? '';
       const jsonMatch = rawText.match(/\{[\s\S]*\}/);
       if (!jsonMatch) throw new Error(`JSON 파싱 실패: ${rawText.slice(0, 100)}`);
       const parsed = JSON.parse(jsonMatch[0]) as any;
-      const category = CATEGORIES.includes(parsed.category) ? parsed.category : '기타';
+      const category = PHOTO_CATEGORIES.includes(parsed.category) ? parsed.category : 'person_or_other';
       const confidence = Math.max(0, Math.min(1, parsed.confidence ?? 0.5));
+      const tags: string[] = Array.isArray(parsed.tags) ? parsed.tags.slice(0, 5) : [];
       await c.env.DB.prepare('INSERT INTO classified_photos (session_id, filename, category, confidence) VALUES (?, ?, ?, ?)').bind(sessionId, photo.filename, category, confidence).run();
-      results.push({ filename: photo.filename, category, confidence, description: parsed.description ?? '', raw: parsed.category });
+      results.push({ filename: photo.filename, category, confidence, tags, description: parsed.description ?? '' });
     } catch (err) {
       const errMsg = err instanceof Error ? err.message : String(err);
-      results.push({ filename: photo.filename, category: '기타', confidence: 0, description: `분류 실패: ${errMsg.slice(0, 50)}` });
+      results.push({ filename: photo.filename, category: 'person_or_other', confidence: 0, tags: [], description: `분류 실패: ${errMsg.slice(0, 50)}` });
     }
   }
 
