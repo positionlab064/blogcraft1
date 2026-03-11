@@ -37,7 +37,7 @@ export interface PostDraft {
 
 // ─── Gemini Vision Classifier ───────────────────────────────────────────────
 
-const GEMINI_API_KEY = import.meta.env.VITE_GEMINI_API_KEY as string;
+const GEMINI_API_KEY = (process.env.GEMINI_API_KEY ?? import.meta.env.VITE_GEMINI_API_KEY) as string;
 
 const CATEGORY_LIST = `exterior(외관/간판/건물), interior(매장내부/홀/좌석/인테리어), menu_board(메뉴판/가격표), signature_menu(대표메뉴/시그니처 음식), full_table(상차림/음식전체/세트구성), food_detail(음식 클로즈업/디테일샷), cooking_process(조리과정/플레이팅/서빙), side_menu(사이드메뉴/추가메뉴), beverage(음료/주류/커피/칵테일/디저트), service_point(셀프바/편의시설), closing_cut(마무리컷), person_or_other(인물/기타)`;
 
