@@ -101,7 +101,10 @@ ${CATEGORY_DESC}
       const confidence = Math.max(0, Math.min(1, parsed.confidence ?? 0.5));
       const tags: string[] = Array.isArray(parsed.tags) ? parsed.tags.slice(0, 5) : [];
 
-      await insertPhoto(sessionId, photo.filename, category, confidence);
+      // DB 저장 실패가 분류 결과에 영향 주지 않도록 별도 처리
+      insertPhoto(sessionId, photo.filename, category, confidence).catch(
+        (e: unknown) => console.warn(`[photos] DB insert skipped (${photo.filename}):`, e instanceof Error ? e.message : e)
+      );
 
       results.push({
         filename: photo.filename,
