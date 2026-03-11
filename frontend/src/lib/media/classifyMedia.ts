@@ -110,8 +110,8 @@ function sleep(ms: number) {
 
 // ─── Main Service Entry Point ───────────────────────────────────────────────
 
-const BATCH_SIZE = 4;
-const BATCH_DELAY_MS = 300;
+const BATCH_SIZE = 1;
+const BATCH_DELAY_MS = 4500;
 
 export async function classifyMedia(
   files: File[],
@@ -147,7 +147,7 @@ export async function classifyMedia(
               break;
             } catch (err) {
               console.error(`[classifyMedia] attempt ${attempt + 1} failed for ${file.name}:`, err);
-              if (attempt === 0) await sleep(1200);
+              if (attempt === 0) await sleep(10000);
             }
           }
           if (!tags.length) tags = [...(CATEGORY_META[category]?.defaultTags ?? [])];
