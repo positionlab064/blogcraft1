@@ -5,9 +5,11 @@ import crypto from 'crypto';
 
 const router = Router();
 
-// 지원하는 사진 카테고리
-const CATEGORIES = ['음식', '풍경', '인물', '동물', '건물/인테리어', '제품', '텍스트/문서', '기타'] as const;
+// 음식점 전용 사진 카테고리
+const CATEGORIES = ['exterior', 'interior', 'menu_board', 'signature_menu', 'full_table', 'food_detail', 'cooking_process', 'side_menu', 'beverage', 'service_point', 'closing_cut', 'person_or_other'] as const;
 type Category = (typeof CATEGORIES)[number];
+
+const CATEGORY_DESC = `exterior(외관/간판/건물), interior(매장내부/홀/좌석/인테리어), menu_board(메뉴판/가격표), signature_menu(대표메뉴/시그니처 음식), full_table(상차림/음식전체/세트구성), food_detail(음식 클로즈업/디테일샷), cooking_process(조리과정/플레이팅/서빙), side_menu(사이드메뉴/추가메뉴), beverage(음료/주류/커피/칵테일/디저트), service_point(셀프바/편의시설), closing_cut(마무리컷), person_or_other(인물/기타)`;
 
 interface PhotoInput {
   filename: string;
@@ -19,6 +21,7 @@ interface PhotoResult {
   filename: string;
   category: Category;
   confidence: number;   // 0~1
+  tags: string[];
   description: string;  // 짧은 설명
 }
 
@@ -57,12 +60,15 @@ router.post('/classify', async (req: Request, res: Response) => {
         ? photo.base64
         : `data:${photo.mimeType ?? 'image/jpeg'};base64,${photo.base64}`;
 
-      const prompt = `이 이미지를 분석하여 다음 JSON 형식으로만 응답하세요:
-{
-  "category": "${CATEGORIES.join('" | "')}",
-  "confidence": 0.0~1.0,
-  "description": "이미지 내용 한 줄 설명 (20자 이내)"
-}`;
+      const prompt = `당신은 음식점 SNS 마케팅 전문가입니다. 이미지를 분석하여 아래 카테고리 중 하나로 분류하세요.
+
+카테고리(반드시 영문 키 그대로 사용):
+${CATEGORY_DESC}
+
+반드시 다음 JSON 형식으로만 응답하세요 (다른 텍스트 없이):
+{"category":"카테고리_키","confidence":0.0~1.0,"tags":["태그1","태그2","태그3"],"description":"한 줄 설명"}
+
+중요: 음식/메뉴 사진은 최대한 구체적 카테고리(signature_menu, food_detail, full_table 등)로 분류하세요. person_or_other는 사람이 메인이거나 분류불가일 때만 사용하세요.`;
 
       const response = await openai.chat.completions.create({
         model: 'gpt-4o-mini',
@@ -87,11 +93,13 @@ router.post('/classify', async (req: Request, res: Response) => {
       const parsed = JSON.parse(jsonMatch[0]) as {
         category: Category;
         confidence: number;
+        tags?: string[];
         description: string;
       };
 
-      const category = CATEGORIES.includes(parsed.category) ? parsed.category : '기타';
+      const category = CATEGORIES.includes(parsed.category) ? parsed.category : 'person_or_other';
       const confidence = Math.max(0, Math.min(1, parsed.confidence ?? 0.5));
+      const tags: string[] = Array.isArray(parsed.tags) ? parsed.tags.slice(0, 5) : [];
 
       await insertPhoto(sessionId, photo.filename, category, confidence);
 
@@ -99,16 +107,18 @@ router.post('/classify', async (req: Request, res: Response) => {
         filename: photo.filename,
         category,
         confidence,
+        tags,
         description: parsed.description ?? '',
       });
     } catch (err) {
-      // 개별 이미지 실패 시 기타로 처리
+      // 개별 이미지 실패 시 person_or_other로 처리
       const message = err instanceof Error ? err.message : '처리 실패';
       console.error(`[photos] ${photo.filename}:`, message);
       results.push({
         filename: photo.filename,
-        category: '기타',
+        category: 'person_or_other',
         confidence: 0,
+        tags: [],
         description: '분류 실패',
       });
     }
