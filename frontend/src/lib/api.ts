@@ -70,6 +70,7 @@ export interface HistoryItem {
 export interface PhotoInput {
   filename: string;
   base64: string;
+  mimeType?: string;
 }
 
 export interface PhotoResult {
@@ -77,6 +78,7 @@ export interface PhotoResult {
   category: string;
   confidence: number;
   description: string;
+  tags?: string[];
 }
 
 export interface ClassifyRes {
