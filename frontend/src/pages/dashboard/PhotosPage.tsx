@@ -2,12 +2,29 @@ import { useState, useRef, useCallback } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
 import {
   Image, Upload, Loader2, X, AlertCircle, Save, RotateCcw, Check,
-  ChevronDown, Layers, ChevronRight, ChevronLeft,
+  ChevronDown, Layers, ChevronRight, ChevronLeft, Download,
 } from 'lucide-react';
+import JSZip from 'jszip';
 import { classifyMedia, buildSavePayload, distributeIntoPosts } from '../../lib/media/classifyMedia';
 import type { ClassifiedMediaItem, PostDraft } from '../../lib/media/classifyMedia';
 import { CATEGORY_META, ALL_IMAGE_CATEGORIES } from '../../lib/media/categoryMeta';
 import type { MediaCategory } from '../../lib/media/categoryMeta';
+
+// 블로그 원고 흐름 순서
+const CATEGORY_FLOW_ORDER: MediaCategory[] = [
+  'exterior', 'interior', 'service_point', 'menu_board',
+  'signature_menu', 'full_table', 'food_detail', 'cooking_process',
+  'side_menu', 'beverage', 'closing_cut', 'person_or_other', 'highlight_video',
+];
+
+function sanitizeLabel(label: string): string {
+  return label.replace(/\//g, '_').replace(/\s+/g, '');
+}
+
+function getExt(fileName: string): string {
+  const parts = fileName.split('.');
+  return parts.length > 1 ? parts[parts.length - 1].toLowerCase() : 'jpg';
+}
 import MediaCard from '../../components/photos/MediaCard';
 
 const ACCEPTED_MIME = ['image/jpeg', 'image/png', 'image/webp'];
@@ -93,6 +110,7 @@ export default function PhotosPage() {
   const [postCount, setPostCount] = useState(3);
   const [postDrafts, setPostDrafts] = useState<PostDraft[]>([]);
   const [isDistributed, setIsDistributed] = useState(false);
+  const [isDownloading, setIsDownloading] = useState(false);
 
   // ── Upload handlers ─────────────────────────────────────────────────────
   const addFiles = useCallback((files: File[]) => {
@@ -212,7 +230,63 @@ export default function PhotosPage() {
         fileNames: d.items.map(i => i.fileName),
       })),
     ));
-    alert(`${postDrafts.length}개 게시물로 배분이 저장되었습니다.`);
+  };
+
+  const handleDownloadDistribution = async () => {
+    setIsDownloading(true);
+    try {
+      handleSaveDistribution();
+      const zip = new JSZip();
+      const multiPost = postDrafts.length > 1;
+
+      for (const draft of postDrafts) {
+        // 원고 흐름 순서로 정렬
+        const sortedItems = [...draft.items].sort((a, b) => {
+          const aIdx = CATEGORY_FLOW_ORDER.indexOf(a.confirmedCategory);
+          const bIdx = CATEGORY_FLOW_ORDER.indexOf(b.confirmedCategory);
+          return (aIdx === -1 ? 999 : aIdx) - (bIdx === -1 ? 999 : bIdx);
+        });
+
+        // 이 게시물에 등장하는 카테고리 순서 번호 부여 (흐름 순)
+        const catOrderMap = new Map<MediaCategory, number>();
+        sortedItems.forEach(item => {
+          if (!catOrderMap.has(item.confirmedCategory)) {
+            catOrderMap.set(item.confirmedCategory, catOrderMap.size + 1);
+          }
+        });
+
+        const catSeq = new Map<MediaCategory, number>();
+        const folder = multiPost ? zip.folder(`게시물${draft.postIndex}`)! : zip;
+
+        for (const item of sortedItems) {
+          const order = catOrderMap.get(item.confirmedCategory)!;
+          const seq = (catSeq.get(item.confirmedCategory) ?? 0) + 1;
+          catSeq.set(item.confirmedCategory, seq);
+          const label = sanitizeLabel(CATEGORY_META[item.confirmedCategory].label);
+          const ext = getExt(item.fileName);
+          const newName = `${order}.${label}_${String(seq).padStart(2, '0')}.${ext}`;
+          const buffer = await item.file.arrayBuffer();
+          folder.file(newName, buffer);
+        }
+      }
+
+      const blob = await zip.generateAsync({ type: 'blob' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.style.display = 'none';
+      const today = new Date().toLocaleDateString('ko-KR', { year: 'numeric', month: '2-digit', day: '2-digit' }).replace(/\. /g, '').replace('.', '');
+      a.download = `사진배분_${today}.zip`;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      setTimeout(() => URL.revokeObjectURL(url), 1000);
+    } catch (e) {
+      console.error('다운로드 실패:', e);
+      alert('다운로드 중 오류가 발생했습니다.');
+    } finally {
+      setIsDownloading(false);
+    }
   };
 
   // ── Computed values ──────────────────────────────────────────────────────
@@ -516,10 +590,13 @@ export default function PhotosPage() {
                   <span className="text-white font-medium">{postDrafts.length}개 게시물</span>로 배분 완료
                 </p>
                 <button
-                  onClick={handleSaveDistribution}
-                  className="btn-primary flex items-center gap-1.5 text-xs px-3 py-1.5"
+                  onClick={handleDownloadDistribution}
+                  disabled={isDownloading}
+                  className="btn-primary flex items-center gap-1.5 text-xs px-3 py-1.5 disabled:opacity-50 disabled:cursor-not-allowed"
                 >
-                  <Save size={12} /> 배분 저장
+                  {isDownloading
+                    ? <><Loader2 size={12} className="animate-spin" /> 준비 중...</>
+                    : <><Download size={12} /> 배분 저장 및 다운로드</>}
                 </button>
               </div>
 
