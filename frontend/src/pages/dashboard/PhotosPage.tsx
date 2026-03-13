@@ -274,10 +274,16 @@ export default function PhotosPage() {
       const url = URL.createObjectURL(blob);
       const a = document.createElement('a');
       a.href = url;
+      a.style.display = 'none';
       const today = new Date().toLocaleDateString('ko-KR', { year: 'numeric', month: '2-digit', day: '2-digit' }).replace(/\. /g, '').replace('.', '');
       a.download = `사진배분_${today}.zip`;
+      document.body.appendChild(a);
       a.click();
-      URL.revokeObjectURL(url);
+      document.body.removeChild(a);
+      setTimeout(() => URL.revokeObjectURL(url), 1000);
+    } catch (e) {
+      console.error('다운로드 실패:', e);
+      alert('다운로드 중 오류가 발생했습니다.');
     } finally {
       setIsDownloading(false);
     }
